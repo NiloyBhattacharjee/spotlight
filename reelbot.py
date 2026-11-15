@@ -16,7 +16,8 @@ from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
 
 HERE = Path(__file__).parent
-VOICE = "en-US-AndrewNeural"  # list others: edge-tts --list-voices
+VOICE = "en-US-BrianMultilingualNeural"  # newer, more human voices: Andrew/Ava/Emma/BrianMultilingualNeural
+RATE = "+8%"  # storytime narration runs a little quicker than the default reading pace
 GRAPH = "v24.0"
 W, H, PAD = 1080, 1920, 90
 BOLD, REG = "C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/segoeui.ttf"
@@ -268,7 +269,7 @@ async def speak(text, mp3):
     """Save the narration and return each word's (start, end, word) in seconds."""
     words = []
     with open(mp3, "wb") as f:
-        async for c in edge_tts.Communicate(text, VOICE, boundary="WordBoundary").stream():
+        async for c in edge_tts.Communicate(text, VOICE, rate=RATE, boundary="WordBoundary").stream():
             if c["type"] == "audio":
                 f.write(c["data"])
             elif c["type"] == "WordBoundary":
