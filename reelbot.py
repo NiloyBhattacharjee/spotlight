@@ -3,7 +3,7 @@
 Claude runs through the Claude Code CLI (`claude -p`, your Claude login), so no API key is needed.
 Env (only for posting): IG_USER_ID, IG_TOKEN
   python reelbot.py              trivia infographic reel, posted
-  python reelbot.py --reddit     Reddit story reel (r/tifu, r/AmItheAsshole, ...), posted
+  python reelbot.py --reddit     drama/revenge Reddit story reel (r/AmItheAsshole, r/pettyrevenge, ...), posted
   add --dry-run to build without posting
   python reelbot.py --demo       render a built-in trivia sample (no API calls) to test the pipeline
 """
@@ -24,10 +24,10 @@ GRAPH = "v24.0"
 W, H, PAD = 1080, 1920, 90
 BOLD, REG = "C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/segoeui.ttf"
 BG, FG, ACCENT, MUTED = "#0f1729", "#f5f1e8", "#f4b942", "#8f9bb3"
-SUBS = ["tifu", "AmItheAsshole", "confession", "pettyrevenge", "MaliciousCompliance", "TrueOffMyChest",
-        "shortscarystories", "nosleep"]
+# one niche (drama and revenge) so Instagram learns who to show the account to
+SUBS = ["AmItheAsshole", "AITAH", "pettyrevenge", "ProRevenge", "MaliciousCompliance", "EntitledPeople",
+        "TrueOffMyChest"]
 MIN_WORDS, MAX_WORDS = 60, 450  # one reel: 450 words is about 3 minutes of speech
-SERIES_MAX_WORDS = 2500  # longer stories (most of r/nosleep) become a series: one part per run, up to ~6 parts
 TOP_WINDOW = "all"  # most upvoted of: hour, day, week, month, year, all
 
 
@@ -110,7 +110,7 @@ def fetch_reddit(sub: str) -> list[dict]:
 
 def pick_story(sub: str, posts: list[dict], seen: list[str]):
     # feed is already sorted by upvotes; keep that order and send the top 30 unused ones
-    cands = [p for p in posts if p["id"] not in seen and MIN_WORDS <= len(p["body"].split()) <= SERIES_MAX_WORDS][:30]
+    cands = [p for p in posts if p["id"] not in seen and MIN_WORDS <= len(p["body"].split()) <= MAX_WORDS][:30]
     if not cands:
         return None, None
     s = ask(f"""Below are the most upvoted r/{sub} posts (JSON), listed from most to least upvoted.
@@ -216,13 +216,6 @@ def pages(text, max_lines=12):
     """Split the story into card-sized pages."""
     d = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     return pack(text, lambda t: len(wrap(d, t, BODY, CARD_W)) <= max_lines)
-
-
-def split_parts(text):
-    """Split a story too long for one reel into evenly sized parts of at most MAX_WORDS."""
-    words = len(text.split())
-    n = -(-words // MAX_WORDS)  # ceiling division
-    return pack(text, lambda t: len(t.split()) <= min(MAX_WORDS, words // n + 15))
 
 
 def trivia_slides(post: Post):
@@ -387,30 +380,17 @@ def main():
     if demo:
         video, key = build(trivia_slides(DEMO), DEMO.caption, out), None
     elif reddit:
-        series_file = HERE / "series.json"  # a long story in progress: its next part goes out before a new story
-        series = json.loads(series_file.read_text(encoding="utf-8")) if series_file.exists() else None
-        key = None
-        if not series:
-            for sub in random.sample(SUBS, len(SUBS)):
-                story, post = pick_story(sub, fetch_reddit(sub), history)
-                if story:
-                    break
-            else:
-                sys.exit("no suitable Reddit story found")
-            key = post["id"]
-            series = {"sub": sub, "author": post["author"], "title": story.title, "caption": story.caption,
-                      "parts": split_parts(story.story), "next": 0}
-        k, n = series["next"], len(series["parts"])
-        title = said = series["title"]
-        caption = series["caption"]
-        if n > 1:
-            title, said = f"{title} (Part {k + 1}/{n})", f"{title}. Part {k + 1}."
-            caption = (f"Part {k + 1}/{n}. Follow for part {k + 2}!" if k + 1 < n else f"Part {n}/{n}, the ending.") \
-                + "\n" + caption
+        for sub in random.sample(SUBS, len(SUBS)):
+            story, post = pick_story(sub, fetch_reddit(sub), history)
+            if story:
+                break
+        else:
+            sys.exit("no suitable Reddit story found")
+        caption, key = story.caption, post["id"]
         clips = [p for p in (HERE / "bg").glob("*") if p.suffix.lower() in (".mp4", ".mov", ".mkv", ".webm")]
         if not clips:
             print("no gameplay clips in bg/ - using a plain background")
-        video = build(reddit_slides(series["sub"], series["author"], title, series["parts"][k], said), caption, out,
+        video = build(reddit_slides(sub, post["author"], story.title, story.story), caption, out,
                       pause=0.15, bg=random.choice(clips) if clips else None)
     else:
         p = generate(history)
@@ -421,14 +401,7 @@ def main():
     if demo or dry:
         return
     print("posted", upload(video, caption))
-    if key:
-        hist_file.write_text(json.dumps(history + [key], indent=1))
-    if reddit:  # move the series on; a finished one is cleared so the next run picks a new story
-        series["next"] += 1
-        if series["next"] < len(series["parts"]):
-            series_file.write_text(json.dumps(series, indent=1), encoding="utf-8")
-        else:
-            series_file.unlink(missing_ok=True)
+    hist_file.write_text(json.dumps(history + [key], indent=1))
 
 
 if __name__ == "__main__":
