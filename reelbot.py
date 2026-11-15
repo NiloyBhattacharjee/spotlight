@@ -167,7 +167,8 @@ BODY = font(REG, 54)
 
 
 def render_card(sub, author, text, body=False):
-    """A Reddit-style post card (generic look, no Reddit logo): the bold title, or one page of the story."""
+    """A Reddit-style post card (generic look, no Reddit logo): the bold title, or one page of the story.
+    Returns the image and each word's box (x, y, w, h, word) in reading order, for the highlighter."""
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))  # transparent: background shows around the card
     d = ImageDraw.Draw(img)
     x0, x1, tf, gap = PAD - 20, W - PAD + 20, BODY if body else font(BOLD, 64), 1.35 if body else 1.25
@@ -178,7 +179,13 @@ def render_card(sub, author, text, body=False):
     d.ellipse([x0 + 50, top + 45, x0 + 110, top + 105], fill="#ff4500")
     d.text((x0 + 130, top + 50), f"r/{sub}  ·  u/{author}", font=font(BOLD, 38), fill="#576f76")
     draw_lines(d, lines, tf, top + 140, "#1a1a1b", gap, x=x0 + 50)
-    return img
+    boxes = []
+    for n, ln in enumerate(lines):
+        words, y = ln.split(" "), top + 140 + n * int(tf.size * gap)
+        for k, w in enumerate(words):
+            x = x0 + 50 + (d.textlength(" ".join(words[:k]) + " ", font=tf) if k else 0)
+            boxes.append((round(x) - 6, y - 2, round(d.textlength(w, font=tf)) + 12, round(tf.size * 1.3), w))
+    return img, boxes
 
 
 def pages(text, max_lines=12):
@@ -205,23 +212,37 @@ def trivia_slides(post: Post):
 
 def reddit_slides(sub, author, s: Story):
     # the post itself on screen: title card, then the story page by page, each shown while it is read
-    return [(render_card(sub, author, s.title), s.title, False)] + \
-           [(render_card(sub, author, p, body=True), p, False) for p in pages(s.story)]
+    cards = [(render_card(sub, author, s.title), s.title)] + \
+            [(render_card(sub, author, p, body=True), p) for p in pages(s.story)]
+    return [(img, text, boxes) for (img, boxes), text in cards]
 
 
-def write_ass(words, path: Path, group=3):
-    """Word-by-word captions: groups of `group` words, the word being spoken highlighted in gold."""
+def match_words(spoken, boxes):
+    """Pair each spoken word (start, end, word) with its box on the card. TTS drops punctuation, so compare
+    letters only and look a few words ahead in case a word was skipped."""
+    norm = lambda s: re.sub(r"\W", "", s.lower())
+    hits, j = [], 0
+    for start, end, w in spoken:
+        a = norm(w)
+        for k in range(j, min(j + 4, len(boxes))):
+            b = norm(boxes[k][4])
+            if a and b and (a.startswith(b) or b.startswith(a)):
+                hits.append((start, end, boxes[k]))
+                j = k + 1
+                break
+    return hits
+
+
+def write_ass(spoken, boxes, path: Path):
+    """Highlighter: a translucent gold box over each word on the card while it is spoken."""
     def ts(s):
         return f"{int(s // 3600)}:{int(s % 3600 // 60):02}:{s % 60:05.2f}"
-    gold = "&H" + ACCENT[5:7] + ACCENT[3:5] + ACCENT[1:3] + "&"  # ASS colours are BGR
-    events = []
-    for g in range(0, len(words), group):
-        grp = [(a, b, re.sub(r"[{}\\]", "", w)) for a, b, w in words[g:g + group]]
-        for k, (start, end, _) in enumerate(grp):
-            nxt = words[g + k + 1][0] if g + k + 1 < len(words) else end + 0.3  # hold until the next word starts
-            text = " ".join(f"{{\\c{gold}}}{w}{{\\c&HFFFFFF&}}" if j == k else w for j, (_, _, w) in enumerate(grp))
-            pop = "{\\fscx112\\fscy112\\t(0,90,\\fscx100\\fscy100)}" if k == 0 else ""
-            events.append(f"Dialogue: 0,{ts(start)},{ts(nxt)},W,,0,0,0,,{pop}{text}")
+    hits, events = match_words(spoken, boxes), []
+    for n, (start, end, (x, y, w, h, _)) in enumerate(hits):
+        stop = hits[n + 1][0] if n + 1 < len(hits) else end + 0.3  # hold until the next word starts
+        events.append(f"Dialogue: 0,{ts(start)},{ts(stop)},W,,0,0,0,,{{\\an7\\pos(0,0)\\p1}}"
+                      f"m {x} {y} l {x + w} {y} l {x + w} {y + h} l {x} {y + h}")
+    gold = "&H70" + ACCENT[5:7] + ACCENT[3:5] + ACCENT[1:3]  # ASS colours are alpha+BGR; 70 = about 55% opaque
     path.write_text(f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
@@ -229,7 +250,7 @@ PlayResY: {H}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: W,Segoe UI,104,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,8,3,5,70,70,0,1
+Style: W,Segoe UI,20,{gold},{gold},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -264,8 +285,8 @@ def duration(path) -> float:
 
 
 def build(slides, caption: str, out: Path, pause=0.6, bg: Path | None = None) -> Path:
-    """slides: list of (PIL image, narration, captions?). Each image is overlaid on the background while its
-    narration plays; captions? adds word-by-word captions synced to the voice.
+    """slides: list of (PIL image, narration, word boxes or None). Each image is overlaid on the background while
+    its narration plays; word boxes add a highlighter that follows the voice word by word.
     bg: a gameplay clip (muted, cropped to 9:16, looped, random start), or None for a plain colour."""
     out = out.resolve()  # the concat list needs absolute paths
     out.mkdir(parents=True, exist_ok=True)
@@ -273,10 +294,10 @@ def build(slides, caption: str, out: Path, pause=0.6, bg: Path | None = None) ->
         img.save(out / f"{i}.png")
     timings = asyncio.run(voice([(t, out / f"{i}.mp3") for i, (_, t, _) in enumerate(slides)]))
     t = random.uniform(0, duration(bg)) if bg else 0
-    for i, (_, _, captions) in enumerate(slides):
+    for i, (_, _, boxes) in enumerate(slides):
         subs = ""
-        if captions:
-            write_ass(timings[i], out / f"{i}.ass")
+        if boxes:
+            write_ass(timings[i], boxes, out / f"{i}.ass")
             subs = f",ass={i}.ass"  # relative: ffmpeg runs inside `out`, avoids Windows path escaping
         src = (["-stream_loop", "-1", "-ss", f"{t:.3f}", "-i", bg] if bg
                else ["-f", "lavfi", "-i", f"color=c={BG.replace('#', '0x')}:s={W}x{H}:r=30"])
