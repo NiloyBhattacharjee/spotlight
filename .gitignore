@@ -4,3 +4,4 @@ bg/*
 !bg/.gitkeep
 history.json
 reddit_history.json
+series.json
