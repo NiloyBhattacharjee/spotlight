@@ -18,6 +18,8 @@ from pydantic import BaseModel
 HERE = Path(__file__).parent
 VOICE = "en-US-BrianMultilingualNeural"  # newer, more human voices: Andrew/Ava/Emma/BrianMultilingualNeural
 RATE = "+8%"  # storytime narration runs a little quicker than the default reading pace
+# voice polish: cut rumble, gentle compression for a fuller, steadier voice, then Instagram's -14 LUFS loudness
+VOICE_FX = "highpass=f=70,acompressor=threshold=-20dB:ratio=3:attack=5:release=150:makeup=2,loudnorm=I=-14:TP=-1.5:LRA=7"
 GRAPH = "v24.0"
 W, H, PAD = 1080, 1920, 90
 BOLD, REG = "C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/segoeui.ttf"
@@ -309,7 +311,7 @@ def build(slides, caption: str, out: Path, pause=0.6, bg: Path | None = None) ->
                else ["-f", "lavfi", "-i", f"color=c={BG.replace('#', '0x')}:s={W}x{H}:r=30"])
         run(*src, "-loop", "1", "-framerate", "30", "-i", out / f"{i}.png", "-i", out / f"{i}.mp3",
             "-filter_complex", f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps=30[b];"
-                               f"[b][1:v]overlay{subs},format=yuv420p[v];[2:a]apad=pad_dur={pause}[a]",
+                               f"[b][1:v]overlay{subs},format=yuv420p[v];[2:a]{VOICE_FX},apad=pad_dur={pause}[a]",
             "-map", "[v]", "-map", "[a]", "-shortest", "-c:v", "libx264", "-preset", "veryfast",
             "-c:a", "aac", "-ar", "48000", out / f"{i}.mp4", cwd=out)
         t += duration(out / f"{i}.mp4")  # next segment continues the gameplay where this one stopped
