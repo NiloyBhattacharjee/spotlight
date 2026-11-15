@@ -3,7 +3,7 @@
 Claude runs through the Claude Code CLI (`claude -p`, your Claude login), so no API key is needed.
 Env (only for posting): IG_USER_ID, IG_TOKEN
   python reelbot.py              trivia infographic reel, posted
-  python reelbot.py --reddit     Reddit story reel (r/tifu, r/AmItheAsshole, ...), posted
+  python reelbot.py --reddit     drama/revenge Reddit story reel (r/AmItheAsshole, r/pettyrevenge, ...), posted
   add --dry-run to build without posting
   python reelbot.py --demo       render a built-in trivia sample (no API calls) to test the pipeline
 """
@@ -17,17 +17,17 @@ from pydantic import BaseModel
 
 HERE = Path(__file__).parent
 VOICE = "en-US-BrianMultilingualNeural"  # newer, more human voices: Andrew/Ava/Emma/BrianMultilingualNeural
-RATE = "+8%"  # storytime narration runs a little quicker than the default reading pace
+RATE = "+15%"  # viral story narration runs about 10-20% faster than normal speech
 # voice polish: cut rumble, gentle compression for a fuller, steadier voice, then Instagram's -14 LUFS loudness
 VOICE_FX = "highpass=f=70,acompressor=threshold=-20dB:ratio=3:attack=5:release=150:makeup=2,loudnorm=I=-14:TP=-1.5:LRA=7"
 GRAPH = "v24.0"
 W, H, PAD = 1080, 1920, 90
 BOLD, REG = "C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/segoeui.ttf"
 BG, FG, ACCENT, MUTED = "#0f1729", "#f5f1e8", "#f4b942", "#8f9bb3"
-SUBS = ["tifu", "AmItheAsshole", "confession", "pettyrevenge", "MaliciousCompliance", "TrueOffMyChest",
-        "shortscarystories", "nosleep"]
-MIN_WORDS, MAX_WORDS = 60, 450  # one reel: 450 words is about 3 minutes of speech
-SERIES_MAX_WORDS = 2500  # longer stories (most of r/nosleep) become a series: one part per run, up to ~6 parts
+# one niche (drama and revenge) so Instagram learns who to show the account to
+SUBS = ["AmItheAsshole", "AITAH", "pettyrevenge", "ProRevenge", "MaliciousCompliance", "EntitledPeople",
+        "TrueOffMyChest"]
+MIN_WORDS, MAX_WORDS = 60, 1500  # source post length; Claude retells it in 150-300 words (about 60-110 s)
 TOP_WINDOW = "all"  # most upvoted of: hour, day, week, month, year, all
 
 
@@ -67,8 +67,9 @@ class Post(BaseModel):
 
 class Story(BaseModel):
     id: str         # chosen post id, or "" if none are suitable
+    hook: str       # short on-screen line above the post, read first
     title: str
-    story: str
+    story: str      # retold in Claude's words, not the author's
     caption: str
 
 
@@ -110,19 +111,25 @@ def fetch_reddit(sub: str) -> list[dict]:
 
 def pick_story(sub: str, posts: list[dict], seen: list[str]):
     # feed is already sorted by upvotes; keep that order and send the top 30 unused ones
-    cands = [p for p in posts if p["id"] not in seen and MIN_WORDS <= len(p["body"].split()) <= SERIES_MAX_WORDS][:30]
+    cands = [p for p in posts if p["id"] not in seen and MIN_WORDS <= len(p["body"].split()) <= MAX_WORDS][:30]
     if not cands:
         return None, None
     s = ask(f"""Below are the most upvoted r/{sub} posts (JSON), listed from most to least upvoted.
-Choose the FIRST post in the list that is suitable for a narrated Instagram Reel. A post is NOT suitable if it is
-a meta or moderator post, an UPDATE that depends on an earlier post for context, or anything sexual, graphic,
-hateful, or involving self-harm or harm to children. If none are suitable, return an empty id.
+Pick the ONE post most likely to go viral as a narrated Instagram Reel: a clear conflict with real stakes, a person
+viewers will take sides on, and a satisfying payoff or twist at the end. Upvotes are a good signal, not the only one.
+A post is NOT suitable if it is a meta or moderator post, an UPDATE that needs an earlier post for context, or
+anything sexual, graphic, hateful, or involving self-harm or harm to children. If none are suitable, return an empty id.
 
-Prepare the chosen post to be read aloud by a text-to-speech voice:
-- title and story: keep the author's words and story exactly. Only expand abbreviations so they read naturally
-  (AITA -> Am I the a-hole, TIFU -> Today I messed up, 27F -> 27 female, MIL -> mother-in-law), bleep strong profanity
-  into mild words, and drop edits, updates, TL;DR sections, links and markdown.
-- caption: one hook line, then "Story by u/<author> on r/{sub}", then 6-8 relevant hashtags.
+Prepare the chosen post for a text-to-speech narrator:
+- story: retell it in your own words (do not copy the author's sentences), first person as the author, 150-300 words,
+  shorter if the original is short. Keep every event, fact and the ending as the author told them; never invent or
+  exaggerate. Write it to be heard: short sentences, plain spoken English, no abbreviations (mother-in-law, not MIL),
+  no profanity stronger than "hell" or "damn". Open straight into the conflict and end on the payoff line.
+- title: the author's title with abbreviations spelled out (AITA -> Am I the a-hole, 27F -> 27 female).
+- hook: at most 8 words of on-screen text that makes people keep watching, like "She did not see this coming."
+  It must be true to the story and must not give away the ending.
+- caption: line 1 the hook; line 2 a short question that gets viewers to take a side in the comments;
+  line 3 "Based on a story by u/<author> on r/{sub}"; then 6-8 relevant hashtags.
 
 Posts: {json.dumps(cands)}""", Story)
     post = next((p for p in cands if p["id"] == s.id), None)
@@ -176,26 +183,42 @@ CARD_W = W - 2 * PAD - 60  # text width inside a post card
 BODY = font(REG, 54)
 
 
-def render_card(sub, author, text, body=False):
+def word_boxes(d, lines, f, x, y, lh):
+    """Each word's box (x, y, w, h, word) in reading order, for the highlighter."""
+    boxes = []
+    for n, ln in enumerate(lines):
+        words = ln.split(" ")
+        for k, w in enumerate(words):
+            wx = x + (d.textlength(" ".join(words[:k]) + " ", font=f) if k else 0)
+            boxes.append((round(wx) - 6, y + n * lh - 2, round(d.textlength(w, font=f)) + 12, round(f.size * 1.3), w))
+    return boxes
+
+
+def render_card(sub, author, text, body=False, hook=""):
     """A Reddit-style post card (generic look, no Reddit logo): the bold title, or one page of the story.
-    Returns the image and each word's box (x, y, w, h, word) in reading order, for the highlighter."""
+    hook: big outlined text above the title card. Returns the image and every word's box, for the highlighter."""
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))  # transparent: background shows around the card
     d = ImageDraw.Draw(img)
     x0, x1, tf, gap = PAD - 20, W - PAD + 20, BODY if body else font(BOLD, 64), 1.35 if body else 1.25
     lines = wrap(d, text, tf, CARD_W)
     h = 200 + len(lines) * int(tf.size * gap)
     top = (H - h) // 2 if body else 560
+    boxes = []
+    if hook:
+        hk = font(BOLD, 76)
+        hl, lh = wrap(d, hook, hk, W - 2 * PAD), int(hk.size * 1.2)
+        hy = top - 50 - len(hl) * lh
+        for n, ln in enumerate(hl):
+            d.text((PAD, hy + n * lh), ln, font=hk, fill="#ffffff", stroke_width=4, stroke_fill="#000000")
+        boxes = word_boxes(d, hl, hk, PAD, hy, lh)
     d.rounded_rectangle([x0, top, x1, top + h], radius=36, fill="#ffffff")
     d.ellipse([x0 + 50, top + 45, x0 + 110, top + 105], fill="#ff4500")
-    d.text((x0 + 130, top + 50), f"r/{sub}  ·  u/{author}", font=font(BOLD, 38), fill="#576f76")
+    hf, head = font(BOLD, 38), f"r/{sub}  ·  u/{author}  ·  retold"  # the story is Claude's retelling, say so
+    if d.textlength(head, font=hf) > x1 - x0 - 180:
+        head = f"r/{sub}  ·  retold"  # long names: the author is still credited in the caption
+    d.text((x0 + 130, top + 50), head, font=hf, fill="#576f76")
     draw_lines(d, lines, tf, top + 140, "#1a1a1b", gap, x=x0 + 50)
-    boxes = []
-    for n, ln in enumerate(lines):
-        words, y = ln.split(" "), top + 140 + n * int(tf.size * gap)
-        for k, w in enumerate(words):
-            x = x0 + 50 + (d.textlength(" ".join(words[:k]) + " ", font=tf) if k else 0)
-            boxes.append((round(x) - 6, y - 2, round(d.textlength(w, font=tf)) + 12, round(tf.size * 1.3), w))
-    return img, boxes
+    return img, boxes + word_boxes(d, lines, tf, x0 + 50, top + 140, int(tf.size * gap))
 
 
 def pack(text, fits):
@@ -218,22 +241,16 @@ def pages(text, max_lines=12):
     return pack(text, lambda t: len(wrap(d, t, BODY, CARD_W)) <= max_lines)
 
 
-def split_parts(text):
-    """Split a story too long for one reel into evenly sized parts of at most MAX_WORDS."""
-    words = len(text.split())
-    n = -(-words // MAX_WORDS)  # ceiling division
-    return pack(text, lambda t: len(t.split()) <= min(MAX_WORDS, words // n + 15))
-
-
 def trivia_slides(post: Post):
     cards = [("DID YOU KNOW?", post.title, "", post.hook)]
     cards += [(f"{i}/{len(post.slides)}", s.big, s.text, s.narration) for i, s in enumerate(post.slides, 1)]
     return [(render(*c[:3], i, len(cards)), c[3], False) for i, c in enumerate(cards)]
 
 
-def reddit_slides(sub, author, title, story, said_title=None):
-    # the post itself on screen: title card, then the story page by page, each shown while it is read
-    cards = [(render_card(sub, author, title), said_title or title)] + \
+def reddit_slides(sub, author, title, story, hook=""):
+    # the post itself on screen: hook + title card, then the story page by page, each shown while it is read
+    said = f"{hook if hook[-1:] in '.!?' else hook + '.'} {title}" if hook else title
+    cards = [(render_card(sub, author, title, hook=hook), said)] + \
             [(render_card(sub, author, p, body=True), p) for p in pages(story)]
     return [(img, text, boxes) for (img, boxes), text in cards]
 
@@ -387,30 +404,22 @@ def main():
     if demo:
         video, key = build(trivia_slides(DEMO), DEMO.caption, out), None
     elif reddit:
-        series_file = HERE / "series.json"  # a long story in progress: its next part goes out before a new story
-        series = json.loads(series_file.read_text(encoding="utf-8")) if series_file.exists() else None
-        key = None
-        if not series:
-            for sub in random.sample(SUBS, len(SUBS)):
-                story, post = pick_story(sub, fetch_reddit(sub), history)
-                if story:
-                    break
-            else:
-                sys.exit("no suitable Reddit story found")
-            key = post["id"]
-            series = {"sub": sub, "author": post["author"], "title": story.title, "caption": story.caption,
-                      "parts": split_parts(story.story), "next": 0}
-        k, n = series["next"], len(series["parts"])
-        title = said = series["title"]
-        caption = series["caption"]
-        if n > 1:
-            title, said = f"{title} (Part {k + 1}/{n})", f"{title}. Part {k + 1}."
-            caption = (f"Part {k + 1}/{n}. Follow for part {k + 2}!" if k + 1 < n else f"Part {n}/{n}, the ending.") \
-                + "\n" + caption
+        for sub in random.sample(SUBS, len(SUBS)):
+            try:
+                posts = fetch_reddit(sub)
+            except requests.RequestException as e:  # one unreachable feed shouldn't sink the run
+                print(f"skipping r/{sub}: {e}")
+                continue
+            story, post = pick_story(sub, posts, history)
+            if story:
+                break
+        else:
+            sys.exit("no suitable Reddit story found")
+        caption, key = story.caption, post["id"]
         clips = [p for p in (HERE / "bg").glob("*") if p.suffix.lower() in (".mp4", ".mov", ".mkv", ".webm")]
         if not clips:
             print("no gameplay clips in bg/ - using a plain background")
-        video = build(reddit_slides(series["sub"], series["author"], title, series["parts"][k], said), caption, out,
+        video = build(reddit_slides(sub, post["author"], story.title, story.story, story.hook), caption, out,
                       pause=0.15, bg=random.choice(clips) if clips else None)
     else:
         p = generate(history)
@@ -421,14 +430,7 @@ def main():
     if demo or dry:
         return
     print("posted", upload(video, caption))
-    if key:
-        hist_file.write_text(json.dumps(history + [key], indent=1))
-    if reddit:  # move the series on; a finished one is cleared so the next run picks a new story
-        series["next"] += 1
-        if series["next"] < len(series["parts"]):
-            series_file.write_text(json.dumps(series, indent=1), encoding="utf-8")
-        else:
-            series_file.unlink(missing_ok=True)
+    hist_file.write_text(json.dumps(history + [key], indent=1))
 
 
 if __name__ == "__main__":
