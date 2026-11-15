@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 HERE = Path(__file__).parent
 VOICE = "en-US-BrianMultilingualNeural"  # newer, more human voices: Andrew/Ava/Emma/BrianMultilingualNeural
-RATE = "+8%"  # storytime narration runs a little quicker than the default reading pace
+RATE = "+15%"  # viral story narration runs about 10-20% faster than normal speech
 # voice polish: cut rumble, gentle compression for a fuller, steadier voice, then Instagram's -14 LUFS loudness
 VOICE_FX = "highpass=f=70,acompressor=threshold=-20dB:ratio=3:attack=5:release=150:makeup=2,loudnorm=I=-14:TP=-1.5:LRA=7"
 GRAPH = "v24.0"
