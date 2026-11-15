@@ -27,7 +27,7 @@ BG, FG, ACCENT, MUTED = "#0f1729", "#f5f1e8", "#f4b942", "#8f9bb3"
 # one niche (drama and revenge) so Instagram learns who to show the account to
 SUBS = ["AmItheAsshole", "AITAH", "pettyrevenge", "ProRevenge", "MaliciousCompliance", "EntitledPeople",
         "TrueOffMyChest"]
-MIN_WORDS, MAX_WORDS = 60, 450  # one reel: 450 words is about 3 minutes of speech
+MIN_WORDS, MAX_WORDS = 60, 1500  # source post length; Claude retells it in 150-300 words (about 60-110 s)
 TOP_WINDOW = "all"  # most upvoted of: hour, day, week, month, year, all
 
 
@@ -67,8 +67,9 @@ class Post(BaseModel):
 
 class Story(BaseModel):
     id: str         # chosen post id, or "" if none are suitable
+    hook: str       # short on-screen line above the post, read first
     title: str
-    story: str
+    story: str      # retold in Claude's words, not the author's
     caption: str
 
 
@@ -114,15 +115,21 @@ def pick_story(sub: str, posts: list[dict], seen: list[str]):
     if not cands:
         return None, None
     s = ask(f"""Below are the most upvoted r/{sub} posts (JSON), listed from most to least upvoted.
-Choose the FIRST post in the list that is suitable for a narrated Instagram Reel. A post is NOT suitable if it is
-a meta or moderator post, an UPDATE that depends on an earlier post for context, or anything sexual, graphic,
-hateful, or involving self-harm or harm to children. If none are suitable, return an empty id.
+Pick the ONE post most likely to go viral as a narrated Instagram Reel: a clear conflict with real stakes, a person
+viewers will take sides on, and a satisfying payoff or twist at the end. Upvotes are a good signal, not the only one.
+A post is NOT suitable if it is a meta or moderator post, an UPDATE that needs an earlier post for context, or
+anything sexual, graphic, hateful, or involving self-harm or harm to children. If none are suitable, return an empty id.
 
-Prepare the chosen post to be read aloud by a text-to-speech voice:
-- title and story: keep the author's words and story exactly. Only expand abbreviations so they read naturally
-  (AITA -> Am I the a-hole, TIFU -> Today I messed up, 27F -> 27 female, MIL -> mother-in-law), bleep strong profanity
-  into mild words, and drop edits, updates, TL;DR sections, links and markdown.
-- caption: one hook line, then "Story by u/<author> on r/{sub}", then 6-8 relevant hashtags.
+Prepare the chosen post for a text-to-speech narrator:
+- story: retell it in your own words (do not copy the author's sentences), first person as the author, 150-300 words,
+  shorter if the original is short. Keep every event, fact and the ending as the author told them; never invent or
+  exaggerate. Write it to be heard: short sentences, plain spoken English, no abbreviations (mother-in-law, not MIL),
+  no profanity stronger than "hell" or "damn". Open straight into the conflict and end on the payoff line.
+- title: the author's title with abbreviations spelled out (AITA -> Am I the a-hole, 27F -> 27 female).
+- hook: at most 8 words of on-screen text that makes people keep watching, like "She did not see this coming."
+  It must be true to the story and must not give away the ending.
+- caption: line 1 the hook; line 2 a short question that gets viewers to take a side in the comments;
+  line 3 "Based on a story by u/<author> on r/{sub}"; then 6-8 relevant hashtags.
 
 Posts: {json.dumps(cands)}""", Story)
     post = next((p for p in cands if p["id"] == s.id), None)
@@ -187,7 +194,10 @@ def render_card(sub, author, text, body=False):
     top = (H - h) // 2 if body else 560
     d.rounded_rectangle([x0, top, x1, top + h], radius=36, fill="#ffffff")
     d.ellipse([x0 + 50, top + 45, x0 + 110, top + 105], fill="#ff4500")
-    d.text((x0 + 130, top + 50), f"r/{sub}  ·  u/{author}", font=font(BOLD, 38), fill="#576f76")
+    hf, head = font(BOLD, 38), f"r/{sub}  ·  u/{author}  ·  retold"  # the story is Claude's retelling, say so
+    if d.textlength(head, font=hf) > x1 - x0 - 180:
+        head = f"r/{sub}  ·  retold"  # long names: the author is still credited in the caption
+    d.text((x0 + 130, top + 50), head, font=hf, fill="#576f76")
     draw_lines(d, lines, tf, top + 140, "#1a1a1b", gap, x=x0 + 50)
     boxes = []
     for n, ln in enumerate(lines):
