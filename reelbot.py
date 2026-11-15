@@ -24,7 +24,8 @@ GRAPH = "v24.0"
 W, H, PAD = 1080, 1920, 90
 BOLD, REG = "C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/segoeui.ttf"
 BG, FG, ACCENT, MUTED = "#0f1729", "#f5f1e8", "#f4b942", "#8f9bb3"
-SUBS = ["tifu", "AmItheAsshole", "confession", "pettyrevenge", "MaliciousCompliance", "TrueOffMyChest"]
+SUBS = ["tifu", "AmItheAsshole", "confession", "pettyrevenge", "MaliciousCompliance", "TrueOffMyChest",
+        "shortscarystories"]
 MIN_WORDS, MAX_WORDS = 60, 450  # 450 words is about 3 minutes of speech
 TOP_WINDOW = "all"  # most upvoted of: hour, day, week, month, year, all
 
