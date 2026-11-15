@@ -183,15 +183,34 @@ CARD_W = W - 2 * PAD - 60  # text width inside a post card
 BODY = font(REG, 54)
 
 
-def render_card(sub, author, text, body=False):
+def word_boxes(d, lines, f, x, y, lh):
+    """Each word's box (x, y, w, h, word) in reading order, for the highlighter."""
+    boxes = []
+    for n, ln in enumerate(lines):
+        words = ln.split(" ")
+        for k, w in enumerate(words):
+            wx = x + (d.textlength(" ".join(words[:k]) + " ", font=f) if k else 0)
+            boxes.append((round(wx) - 6, y + n * lh - 2, round(d.textlength(w, font=f)) + 12, round(f.size * 1.3), w))
+    return boxes
+
+
+def render_card(sub, author, text, body=False, hook=""):
     """A Reddit-style post card (generic look, no Reddit logo): the bold title, or one page of the story.
-    Returns the image and each word's box (x, y, w, h, word) in reading order, for the highlighter."""
+    hook: big outlined text above the title card. Returns the image and every word's box, for the highlighter."""
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))  # transparent: background shows around the card
     d = ImageDraw.Draw(img)
     x0, x1, tf, gap = PAD - 20, W - PAD + 20, BODY if body else font(BOLD, 64), 1.35 if body else 1.25
     lines = wrap(d, text, tf, CARD_W)
     h = 200 + len(lines) * int(tf.size * gap)
     top = (H - h) // 2 if body else 560
+    boxes = []
+    if hook:
+        hk = font(BOLD, 76)
+        hl, lh = wrap(d, hook, hk, W - 2 * PAD), int(hk.size * 1.2)
+        hy = top - 50 - len(hl) * lh
+        for n, ln in enumerate(hl):
+            d.text((PAD, hy + n * lh), ln, font=hk, fill="#ffffff", stroke_width=4, stroke_fill="#000000")
+        boxes = word_boxes(d, hl, hk, PAD, hy, lh)
     d.rounded_rectangle([x0, top, x1, top + h], radius=36, fill="#ffffff")
     d.ellipse([x0 + 50, top + 45, x0 + 110, top + 105], fill="#ff4500")
     hf, head = font(BOLD, 38), f"r/{sub}  ·  u/{author}  ·  retold"  # the story is Claude's retelling, say so
@@ -199,13 +218,7 @@ def render_card(sub, author, text, body=False):
         head = f"r/{sub}  ·  retold"  # long names: the author is still credited in the caption
     d.text((x0 + 130, top + 50), head, font=hf, fill="#576f76")
     draw_lines(d, lines, tf, top + 140, "#1a1a1b", gap, x=x0 + 50)
-    boxes = []
-    for n, ln in enumerate(lines):
-        words, y = ln.split(" "), top + 140 + n * int(tf.size * gap)
-        for k, w in enumerate(words):
-            x = x0 + 50 + (d.textlength(" ".join(words[:k]) + " ", font=tf) if k else 0)
-            boxes.append((round(x) - 6, y - 2, round(d.textlength(w, font=tf)) + 12, round(tf.size * 1.3), w))
-    return img, boxes
+    return img, boxes + word_boxes(d, lines, tf, x0 + 50, top + 140, int(tf.size * gap))
 
 
 def pack(text, fits):
@@ -234,9 +247,10 @@ def trivia_slides(post: Post):
     return [(render(*c[:3], i, len(cards)), c[3], False) for i, c in enumerate(cards)]
 
 
-def reddit_slides(sub, author, title, story, said_title=None):
-    # the post itself on screen: title card, then the story page by page, each shown while it is read
-    cards = [(render_card(sub, author, title), said_title or title)] + \
+def reddit_slides(sub, author, title, story, hook=""):
+    # the post itself on screen: hook + title card, then the story page by page, each shown while it is read
+    said = f"{hook if hook[-1:] in '.!?' else hook + '.'} {title}" if hook else title
+    cards = [(render_card(sub, author, title, hook=hook), said)] + \
             [(render_card(sub, author, p, body=True), p) for p in pages(story)]
     return [(img, text, boxes) for (img, boxes), text in cards]
 
@@ -400,7 +414,7 @@ def main():
         clips = [p for p in (HERE / "bg").glob("*") if p.suffix.lower() in (".mp4", ".mov", ".mkv", ".webm")]
         if not clips:
             print("no gameplay clips in bg/ - using a plain background")
-        video = build(reddit_slides(sub, post["author"], story.title, story.story), caption, out,
+        video = build(reddit_slides(sub, post["author"], story.title, story.story, story.hook), caption, out,
                       pause=0.15, bg=random.choice(clips) if clips else None)
     else:
         p = generate(history)
