@@ -17,9 +17,9 @@ from pydantic import BaseModel
 
 HERE = Path(__file__).parent
 VOICE = "en-US-BrianMultilingualNeural"  # newer, more human voices: Andrew/Ava/Emma/BrianMultilingualNeural
-RATE = "+15%"  # viral story narration runs about 10-20% faster than normal speech
+RATE = "+50%"  # 1.5x speed
 # voice polish: cut rumble, gentle compression for a fuller, steadier voice, then Instagram's -14 LUFS loudness
-VOICE_FX = "highpass=f=70,acompressor=threshold=-20dB:ratio=3:attack=5:release=150:makeup=2,loudnorm=I=-14:TP=-1.5:LRA=7"
+VOICE_FX = "highpass=f=70,bass=g=2:f=160,treble=g=-2:f=7000,acompressor=threshold=-20dB:ratio=3:attack=5:release=150:makeup=2,loudnorm=I=-14:TP=-1.5:LRA=7"
 GRAPH = "v24.0"
 W, H, PAD = 1080, 1920, 90
 BOLD, REG = "C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/segoeui.ttf"
@@ -122,8 +122,12 @@ anything sexual, graphic, hateful, or involving self-harm or harm to children. I
 Prepare the chosen post for a text-to-speech narrator:
 - story: retell it in your own words (do not copy the author's sentences), first person as the author, 150-300 words,
   shorter if the original is short. Keep every event, fact and the ending as the author told them; never invent or
-  exaggerate. Write it to be heard: short sentences, plain spoken English, no abbreviations (mother-in-law, not MIL),
-  no profanity stronger than "hell" or "damn". Open straight into the conflict and end on the payoff line.
+  exaggerate. Write it the way a person tells a story to a friend, not the way an essay reads: contractions (I'd,
+  didn't, she's), sentence lengths that vary (a long one, then a short punch), the odd natural connector ("So,",
+  "Anyway,", "And get this,"), a brief honest reaction where the author would have one ("I was speechless."), and
+  commas, dashes or "..." where a speaker would pause for effect. Use those sparingly; no "um" or "like" filler.
+  No abbreviations (mother-in-law, not MIL), no profanity stronger than "hell" or "damn". Open straight into the
+  conflict and end on the payoff line.
 - title: the author's title with abbreviations spelled out (AITA -> Am I the a-hole, 27F -> 27 female).
 - caption: line 1 a hook of at most 8 words that makes people watch, like "She did not see this coming." (true to
   the story, does not give away the ending); line 2 a short question that gets viewers to take a side in the comments;
