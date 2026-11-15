@@ -197,13 +197,11 @@ def render_card(sub, author, text, body=False):
     return img, boxes
 
 
-def pages(text, max_lines=12):
-    """Split the story into card-sized pages, breaking between sentences where possible."""
-    d = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-    fits = lambda t: len(wrap(d, t, BODY, CARD_W)) <= max_lines
+def pack(text, fits):
+    """Group sentences into the fewest chunks for which fits(chunk) holds, breaking between sentences."""
     units = []
     for s in re.split(r"(?<=[.!?])\s+", text.strip()):
-        units += [s] if fits(s) else s.split()  # a run-on sentence too long for one card breaks between words
+        units += [s] if fits(s) else s.split()  # a run-on sentence too long for one chunk breaks between words
     out = []
     for u in units:
         if out and fits(f"{out[-1]} {u}"):
@@ -211,6 +209,12 @@ def pages(text, max_lines=12):
         else:
             out.append(u)
     return out
+
+
+def pages(text, max_lines=12):
+    """Split the story into card-sized pages."""
+    d = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    return pack(text, lambda t: len(wrap(d, t, BODY, CARD_W)) <= max_lines)
 
 
 def trivia_slides(post: Post):
