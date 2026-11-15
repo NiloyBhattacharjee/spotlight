@@ -1,16 +1,17 @@
 """Daily reels -> AI voice -> Instagram. Two modes: trivia infographics, or narrated Reddit stories.
 
-Env: ANTHROPIC_API_KEY, IG_USER_ID, IG_TOKEN
+Claude runs through the Claude Code CLI (`claude -p`, your Claude login), so no API key is needed.
+Env (only for posting): IG_USER_ID, IG_TOKEN
   python reelbot.py              trivia infographic reel, posted
   python reelbot.py --reddit     Reddit story reel (r/tifu, r/AmItheAsshole, ...), posted
   add --dry-run to build without posting
   python reelbot.py --demo       render a built-in trivia sample (no API calls) to test the pipeline
 """
-import asyncio, html, json, os, random, re, subprocess, sys, time
+import asyncio, html, json, os, random, re, shutil, subprocess, sys, time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import anthropic, edge_tts, requests
+import edge_tts, requests
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
 
@@ -28,17 +29,21 @@ TOP_WINDOW = "all"  # most upvoted of: hour, day, week, month, year, all
 # ---------- Claude ----------
 
 def ask(prompt: str, schema):
-    r = anthropic.Anthropic().beta.messages.parse(
-        model="claude-opus-5-5",
-        max_tokens=16000,
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-        messages=[{"role": "user", "content": prompt}],
-        output_format=schema,
-    )
-    if r.stop_reason != "end_turn" or not r.parsed_output:
-        raise RuntimeError(f"generation failed: {r.stop_reason} {r.stop_details}")
-    return r.parsed_output
+    """Structured answer from Claude via the Claude Code CLI, using your Claude login instead of an API key.
+    --tools "" turns off every tool: the prompt carries untrusted Reddit text, so Claude may only answer."""
+    exe = shutil.which("claude")
+    if not exe:
+        sys.exit("Claude Code CLI not found: install it and run `claude` once to log in")
+    r = subprocess.run([exe, "-p", "--output-format", "json", "--json-schema", json.dumps(schema.model_json_schema()),
+                        "--tools", "", "--strict-mcp-config", "--no-session-persistence"],
+                       input=prompt, capture_output=True, text=True, encoding="utf-8")
+    try:
+        out = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        raise RuntimeError(f"claude failed ({r.returncode}): {r.stderr or r.stdout}") from None
+    if out.get("is_error") or not out.get("structured_output"):
+        raise RuntimeError(f"generation failed: {out.get('subtype')} {out.get('result')}")
+    return schema.model_validate(out["structured_output"])
 
 
 class Slide(BaseModel):
