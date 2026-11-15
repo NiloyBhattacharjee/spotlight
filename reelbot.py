@@ -67,7 +67,6 @@ class Post(BaseModel):
 
 class Story(BaseModel):
     id: str         # chosen post id, or "" if none are suitable
-    hook: str       # short on-screen line above the post, read first
     title: str
     story: str      # retold in Claude's words, not the author's
     caption: str
@@ -126,9 +125,8 @@ Prepare the chosen post for a text-to-speech narrator:
   exaggerate. Write it to be heard: short sentences, plain spoken English, no abbreviations (mother-in-law, not MIL),
   no profanity stronger than "hell" or "damn". Open straight into the conflict and end on the payoff line.
 - title: the author's title with abbreviations spelled out (AITA -> Am I the a-hole, 27F -> 27 female).
-- hook: at most 8 words of on-screen text that makes people keep watching, like "She did not see this coming."
-  It must be true to the story and must not give away the ending.
-- caption: line 1 the hook; line 2 a short question that gets viewers to take a side in the comments;
+- caption: line 1 a hook of at most 8 words that makes people watch, like "She did not see this coming." (true to
+  the story, does not give away the ending); line 2 a short question that gets viewers to take a side in the comments;
   line 3 "Based on a story by u/<author> on r/{sub}"; then 6-8 relevant hashtags.
 
 Posts: {json.dumps(cands)}""", Story)
@@ -194,23 +192,15 @@ def word_boxes(d, lines, f, x, y, lh):
     return boxes
 
 
-def render_card(sub, author, text, body=False, hook=""):
+def render_card(sub, author, text, body=False):
     """A Reddit-style post card (generic look, no Reddit logo): the bold title, or one page of the story.
-    hook: big outlined text above the title card. Returns the image and every word's box, for the highlighter."""
+    Returns the image and every word's box, for the highlighter."""
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))  # transparent: background shows around the card
     d = ImageDraw.Draw(img)
     x0, x1, tf, gap = PAD - 20, W - PAD + 20, BODY if body else font(BOLD, 64), 1.35 if body else 1.25
     lines = wrap(d, text, tf, CARD_W)
     h = 200 + len(lines) * int(tf.size * gap)
-    top = (H - h) // 2 if body else 560
-    boxes = []
-    if hook:
-        hk = font(BOLD, 76)
-        hl, lh = wrap(d, hook, hk, W - 2 * PAD), int(hk.size * 1.2)
-        hy = top - 50 - len(hl) * lh
-        for n, ln in enumerate(hl):
-            d.text((PAD, hy + n * lh), ln, font=hk, fill="#ffffff", stroke_width=4, stroke_fill="#000000")
-        boxes = word_boxes(d, hl, hk, PAD, hy, lh)
+    top = (H - h) // 2
     d.rounded_rectangle([x0, top, x1, top + h], radius=36, fill="#ffffff")
     d.ellipse([x0 + 50, top + 45, x0 + 110, top + 105], fill="#ff4500")
     hf, head = font(BOLD, 38), f"r/{sub}  ·  u/{author}  ·  retold"  # the story is Claude's retelling, say so
@@ -218,7 +208,7 @@ def render_card(sub, author, text, body=False, hook=""):
         head = f"r/{sub}  ·  retold"  # long names: the author is still credited in the caption
     d.text((x0 + 130, top + 50), head, font=hf, fill="#576f76")
     draw_lines(d, lines, tf, top + 140, "#1a1a1b", gap, x=x0 + 50)
-    return img, boxes + word_boxes(d, lines, tf, x0 + 50, top + 140, int(tf.size * gap))
+    return img, word_boxes(d, lines, tf, x0 + 50, top + 140, int(tf.size * gap))
 
 
 def pack(text, fits):
@@ -247,10 +237,9 @@ def trivia_slides(post: Post):
     return [(render(*c[:3], i, len(cards)), c[3], False) for i, c in enumerate(cards)]
 
 
-def reddit_slides(sub, author, title, story, hook=""):
-    # the post itself on screen: hook + title card, then the story page by page, each shown while it is read
-    said = f"{hook if hook[-1:] in '.!?' else hook + '.'} {title}" if hook else title
-    cards = [(render_card(sub, author, title, hook=hook), said)] + \
+def reddit_slides(sub, author, title, story):
+    # the post itself on screen: the title card, then the story page by page, each shown while it is read
+    cards = [(render_card(sub, author, title), title)] + \
             [(render_card(sub, author, p, body=True), p) for p in pages(story)]
     return [(img, text, boxes) for (img, boxes), text in cards]
 
@@ -419,7 +408,7 @@ def main():
         clips = [p for p in (HERE / "bg").glob("*") if p.suffix.lower() in (".mp4", ".mov", ".mkv", ".webm")]
         if not clips:
             print("no gameplay clips in bg/ - using a plain background")
-        video = build(reddit_slides(sub, post["author"], story.title, story.story, story.hook), caption, out,
+        video = build(reddit_slides(sub, post["author"], story.title, story.story), caption, out,
                       pause=0.15, bg=random.choice(clips) if clips else None)
     else:
         p = generate(history)
