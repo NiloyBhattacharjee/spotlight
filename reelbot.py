@@ -405,7 +405,12 @@ def main():
         video, key = build(trivia_slides(DEMO), DEMO.caption, out), None
     elif reddit:
         for sub in random.sample(SUBS, len(SUBS)):
-            story, post = pick_story(sub, fetch_reddit(sub), history)
+            try:
+                posts = fetch_reddit(sub)
+            except requests.RequestException as e:  # one unreachable feed shouldn't sink the run
+                print(f"skipping r/{sub}: {e}")
+                continue
+            story, post = pick_story(sub, posts, history)
             if story:
                 break
         else:
