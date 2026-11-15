@@ -122,8 +122,12 @@ anything sexual, graphic, hateful, or involving self-harm or harm to children. I
 Prepare the chosen post for a text-to-speech narrator:
 - story: retell it in your own words (do not copy the author's sentences), first person as the author, 150-300 words,
   shorter if the original is short. Keep every event, fact and the ending as the author told them; never invent or
-  exaggerate. Write it to be heard: short sentences, plain spoken English, no abbreviations (mother-in-law, not MIL),
-  no profanity stronger than "hell" or "damn". Open straight into the conflict and end on the payoff line.
+  exaggerate. Write it the way a person tells a story to a friend, not the way an essay reads: contractions (I'd,
+  didn't, she's), sentence lengths that vary (a long one, then a short punch), the odd natural connector ("So,",
+  "Anyway,", "And get this,"), a brief honest reaction where the author would have one ("I was speechless."), and
+  commas, dashes or "..." where a speaker would pause for effect. Use those sparingly; no "um" or "like" filler.
+  No abbreviations (mother-in-law, not MIL), no profanity stronger than "hell" or "damn". Open straight into the
+  conflict and end on the payoff line.
 - title: the author's title with abbreviations spelled out (AITA -> Am I the a-hole, 27F -> 27 female).
 - caption: line 1 a hook of at most 8 words that makes people watch, like "She did not see this coming." (true to
   the story, does not give away the ending); line 2 a short question that gets viewers to take a side in the comments;
