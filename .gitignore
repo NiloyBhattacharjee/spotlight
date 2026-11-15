@@ -1,0 +1,6 @@
+__pycache__/
+out/
+bg/*
+!bg/.gitkeep
+history.json
+reddit_history.json
