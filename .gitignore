@@ -8,3 +8,10 @@ music/*
 !music/.gitkeep
 book_history.json
 .venv-kokoro/
+.venv-chatterbox/
+tokens.json
+*.env
+*.tokens.json
+logs/
+posts.json
+*.posts.json
