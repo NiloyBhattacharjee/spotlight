@@ -1,9 +1,10 @@
-"""Daily reels -> AI voice -> Instagram. Two modes: trivia infographics, or narrated Reddit stories.
+"""Daily reels -> AI voice -> Instagram. Modes: trivia infographics, narrated Reddit stories, or classic-book lessons.
 
 Claude runs through the Claude Code CLI (`claude -p`, your Claude login), so no API key is needed.
 Env (only for posting): IG_USER_ID, IG_TOKEN
   python reelbot.py              trivia infographic reel, posted
   python reelbot.py --reddit     drama/revenge Reddit story reel (r/AmItheAsshole, r/pettyrevenge, ...), posted
+  python reelbot.py --book       lessons from a public-domain classic (Meditations, The Art of War, ...), posted
   add --dry-run to build without posting
   python reelbot.py --demo       render a built-in trivia sample (no API calls) to test the pipeline
 """
@@ -65,6 +66,10 @@ class Post(BaseModel):
     caption: str
 
 
+class Book(Post):
+    book: str       # "Meditations · Marcus Aurelius", shown above the title
+
+
 class Story(BaseModel):
     id: str         # chosen post id, or "" if none are suitable
     title: str
@@ -82,6 +87,22 @@ Pick ONE specific, surprising topic. Do not repeat any of these past topics: {hi
   "text" is one sentence under 18 words, "narration" is 1-2 conversational spoken sentences.
 - Use only well-established, verifiable facts. If a figure is an estimate, say "about".
 - caption: a hook line, one line of context, then 6-8 relevant hashtags.""", Post)
+
+
+def generate_book(history: list[str]) -> Book:
+    return ask(f"""You make Instagram Reels that turn classic public-domain books into modern, practical advice.
+Pick ONE book published before 1929 (Stoic philosophy, strategy, psychology, history, gothic literature...) and ONE
+specific modern angle on it. A book may come back with a new angle; do not repeat any of these past
+topics: {history[-60:] or "none yet"}.
+
+- topic: "<book> - <angle>", for the history list.
+- book: "<short title> · <author>", max 30 characters.
+- title: max 7 words, a modern problem the book solves, like "The Roman trick to stop overthinking". Not "Summary of".
+- hook: one spoken sentence (under 15 words) that makes people keep watching.
+- slides: 3 or 4 lessons. "big" names the lesson in max 14 characters, "text" is one sentence under 18 words,
+  "narration" is 2-3 conversational spoken sentences: what the author said and how to use it today.
+- Stay true to what the book actually says. Paraphrase; never present a quote as the author's exact words.
+- caption: a hook line, one line naming the book and author, then 6-8 relevant hashtags.""", Book)
 
 
 # ---------- Reddit ----------
@@ -235,8 +256,8 @@ def pages(text, max_lines=12):
     return pack(text, lambda t: len(wrap(d, t, BODY, CARD_W)) <= max_lines)
 
 
-def trivia_slides(post: Post):
-    cards = [("DID YOU KNOW?", post.title, "", post.hook)]
+def trivia_slides(post: Post, label="DID YOU KNOW?"):
+    cards = [(label, post.title, "", post.hook)]
     cards += [(f"{i}/{len(post.slides)}", s.big, s.text, s.narration) for i, s in enumerate(post.slides, 1)]
     return [(render(*c[:3], i, len(cards)), c[3], False) for i, c in enumerate(cards)]
 
@@ -292,14 +313,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 async def speak(text, mp3):
     """Save the narration and return each word's (start, end, word) in seconds."""
-    words = []
-    with open(mp3, "wb") as f:
-        async for c in edge_tts.Communicate(text, VOICE, rate=RATE, boundary="WordBoundary").stream():
-            if c["type"] == "audio":
-                f.write(c["data"])
-            elif c["type"] == "WordBoundary":
-                words.append((c["offset"] / 1e7, (c["offset"] + c["duration"]) / 1e7, c["text"]))
-    return words
+    for attempt in range(3):  # Edge's free endpoint now and then sends no audio; a retry a few seconds later works
+        words = []
+        try:
+            with open(mp3, "wb") as f:
+                async for c in edge_tts.Communicate(text, VOICE, rate=RATE, boundary="WordBoundary").stream():
+                    if c["type"] == "audio":
+                        f.write(c["data"])
+                    elif c["type"] == "WordBoundary":
+                        words.append((c["offset"] / 1e7, (c["offset"] + c["duration"]) / 1e7, c["text"]))
+            return words
+        except edge_tts.exceptions.NoAudioReceived:
+            if attempt == 2:
+                raise
+            await asyncio.sleep(5)
 
 
 async def voice(items):
@@ -389,8 +416,8 @@ DEMO = Post(
 
 
 def main():
-    demo, dry, reddit = "--demo" in sys.argv, "--dry-run" in sys.argv, "--reddit" in sys.argv
-    hist_file = HERE / ("reddit_history.json" if reddit else "history.json")
+    demo, dry, reddit, book = (a in sys.argv for a in ("--demo", "--dry-run", "--reddit", "--book"))
+    hist_file = HERE / ("reddit_history.json" if reddit else "book_history.json" if book else "history.json")
     history = json.loads(hist_file.read_text()) if hist_file.exists() else []
     out = HERE / "out" / time.strftime("%Y-%m-%d_%H%M%S")
 
@@ -414,6 +441,10 @@ def main():
             print("no gameplay clips in bg/ - using a plain background")
         video = build(reddit_slides(sub, post["author"], story.title, story.story), caption, out,
                       pause=0.15, bg=random.choice(clips) if clips else None)
+    elif book:
+        p = generate_book(history)
+        caption, key = p.caption, p.topic
+        video = build(trivia_slides(p, p.book.upper()), caption, out)
     else:
         p = generate(history)
         caption, key = p.caption, p.topic
