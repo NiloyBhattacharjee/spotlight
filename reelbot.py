@@ -1,11 +1,11 @@
-"""Daily reels -> AI voice -> Instagram. Modes: trivia infographics, narrated Reddit stories, or classic-book lessons.
+"""Daily reels -> AI voice -> Instagram. Modes: trivia infographics, narrated Reddit stories, or animated stories of classic books.
 
 Claude runs through the Claude Code CLI (`claude -p`, your Claude login), so no API key is needed.
 Env (only for posting): IG_USER_ID, IG_TOKEN
   python reelbot.py              trivia infographic reel, posted
   python reelbot.py --reddit     drama/revenge Reddit story reel (r/AmItheAsshole, r/pettyrevenge, ...), posted
-  python reelbot.py --book       lessons from a public-domain classic (Meditations, The Art of War, ...), posted
-  python reelbot.py --book "White Nights"   the same, from a book you choose
+  python reelbot.py --book       animated story of a public-domain classic, told TED-Ed style, posted
+  python reelbot.py --book "White Nights"   the same, for a book you choose
   add --dry-run to build without posting
   --book narrates with Kokoro (open-source, local) once set up, else Edge. Setup, needs Python 3.10-3.12:
     py -3.11 -m venv .venv-kokoro
@@ -35,10 +35,11 @@ SUBS = ["AmItheAsshole", "AITAH", "pettyrevenge", "ProRevenge", "MaliciousCompli
         "TrueOffMyChest"]
 MIN_WORDS, MAX_WORDS = 60, 1500  # source post length; Claude retells it in 150-300 words (about 60-110 s)
 TOP_WINDOW = "all"  # most upvoted of: hour, day, week, month, year, all
-# book reels: one painted look across every slide, and a quiet music bed under the voice
-ART_STYLE = "dark moody oil painting, chiaroscuro, muted earth tones, cinematic lighting, no text, no letters"
+# book reels: illustrations in one storybook-animation look, camera moves, a quiet music bed under the voice
+ART_STYLE = ("still from a 2D animated short film, hand-painted storybook illustration, textured brushwork, muted warm "
+             "palette, soft cinematic light, no text, no letters")
 KOKORO_PY = HERE / ".venv-kokoro" / "Scripts" / "python.exe"
-KOKORO_VOICE, KOKORO_SPEED = "af_heart", "1.2"  # af_heart is Kokoro's best-rated voice; am_michael is the male one
+KOKORO_VOICE, KOKORO_SPEED = "am_michael", "1.2"  # male; af_heart is the best-rated (female)
 MUSIC = HERE / "music"  # drop royalty-free tracks here (Pixabay Music, YouTube Audio Library); empty = synth drone
 
 
@@ -76,14 +77,15 @@ class Post(BaseModel):
     caption: str
 
 
-class BookSlide(Slide):
-    art: str        # scene painted behind this slide
+class Scene(BaseModel):
+    narration: str  # 1-2 sentences of the script
+    art: str        # the illustration on screen while it is spoken
 
 
-class Book(Post):
-    book: str       # "Meditations · Marcus Aurelius", shown above the title
-    cover_art: str  # scene painted behind the title slide
-    slides: list[BookSlide]
+class Film(BaseModel):
+    topic: str      # "<book> by <author>", for the history list
+    scenes: list[Scene]
+    caption: str
 
 
 class Story(BaseModel):
@@ -105,29 +107,32 @@ Pick ONE specific, surprising topic. Do not repeat any of these past topics: {hi
 - caption: a hook line, one line of context, then 6-8 relevant hashtags.""", Post)
 
 
-def generate_book(history: list[str], book: str | None = None) -> Book:
-    pick = (f"The book is {book}. Pick" if book else
-            "Pick ONE book published before 1929 (Stoic philosophy, strategy, psychology, history, gothic literature...) and")
-    return ask(f"""You make Instagram Reels that turn classic public-domain books into modern, practical advice.
-For a novel, the lessons are what its story and characters teach about life today.
-{pick} ONE specific modern angle on it. A book may come back with a new angle; do not repeat any of these past
-topics: {history[-60:] or "none yet"}.
+def generate_film(history: list[str], book: str | None = None) -> Film:
+    pick = f"The book is {book}." if book else ("Pick ONE classic book published before 1929 (a novel, epic, play, "
+                                                "philosophy or history) that people have heard of but not read.")
+    return ask(f"""You write narration for short animated Instagram Reels in the style of TED-Ed's "Why should you
+read...?" videos. {pick} Do not repeat any of these past topics: {history[-60:] or "none yet"}.
 
-- topic: "<book> - <angle>", for the history list.
-- book: "<short title> · <author>", max 30 characters.
-- title: max 7 words, a modern problem the book solves, like "The Roman trick to stop overthinking". Not "Summary of".
-- hook: one spoken sentence (under 15 words) that makes people keep watching.
-- slides: 3 or 4 lessons. "big" names the lesson in max 14 characters, "text" is one sentence under 18 words,
-  "narration" is 2-3 conversational spoken sentences: what the author said and how to use it today.
-- Stay true to what the book actually says. Paraphrase; never present a quote as the author's exact words.
-- cover_art and each slide's art: a scene under 25 words for a painting behind that slide, from the book's world or
-  the lesson's metaphor (a Roman general at dawn, a ship in a storm). Describe it visually; no text or lettering.
-- caption: a hook line, one line naming the book and author, then 6-8 relevant hashtags.""", Book)
+The script is 140-190 words (about 70 seconds spoken) and tells a story; it is not a summary or a list of lessons:
+- Open cold inside the book's most vivid moment, in the present tense, as if it is happening now, like
+  "Mounting his skinny steed, the protagonist of Don Quixote charges an army of giants." No greeting, no "in this video".
+- Pull back: name the book and author, and the surprising life or times behind it.
+- What the book did that was new or daring, and what it was written against.
+- Its heart: the central characters or idea, shown through concrete moments rather than morals.
+- End on one resonant line about what the book says about being human. No call to action.
+Write for the ear: varied sentence lengths, concrete images, plain words. Every fact must be accurate: no invented
+quotes, dates or numbers; if unsure, leave it out.
+
+- topic: "<title> by <author>".
+- scenes: 8 to 11 in order, together forming the script. narration is 1-2 of its sentences. art describes the one
+  illustration on screen meanwhile, under 30 words: who, where, doing what, framed like a film shot. Describe each
+  recurring character the same way every time (e.g. "a tall thin old knight in dented armour with a grey beard").
+- caption: line 1 a hook under 10 words, line 2 the title and author, then 6-8 relevant hashtags.""", Film)
 
 
 def paint(scene: str, seed: int):
     """AI art from Pollinations (free, no key; anonymous images carry a small logo). One seed per reel keeps the look
-    consistent. Returns None on failure: the plain card still works."""
+    consistent. Returns None on failure."""
     for _ in range(4):
         try:
             r = requests.get("https://image.pollinations.ai/prompt/" + urllib.parse.quote(f"{scene}, {ART_STYLE}", safe=""),
@@ -223,10 +228,8 @@ def draw_lines(draw, lines, f, y, fill, gap=1.25, x=PAD):
     return y
 
 
-def render(label, big, text, i, n, art=None):
+def render(label, big, text, i, n):
     img = Image.new("RGB", (W, H), BG)
-    if art:  # painting behind the card, dimmed toward the background colour so the text stays readable
-        img = Image.blend(ImageOps.fit(art, (W, H)), img, 0.55)
     d = ImageDraw.Draw(img)
     d.rectangle([0, 0, W, 14], fill=ACCENT)
     d.text((PAD, 260), label, font=font(BOLD, 44), fill=MUTED)
@@ -297,10 +300,10 @@ def pages(text, max_lines=12):
     return pack(text, lambda t: len(wrap(d, t, BODY, CARD_W)) <= max_lines)
 
 
-def trivia_slides(post: Post, label="DID YOU KNOW?", arts=None):
+def trivia_slides(post: Post, label="DID YOU KNOW?"):
     cards = [(label, post.title, "", post.hook)]
     cards += [(f"{i}/{len(post.slides)}", s.big, s.text, s.narration) for i, s in enumerate(post.slides, 1)]
-    return [(render(*c[:3], i, len(cards), arts[i] if arts else None), c[3], False) for i, c in enumerate(cards)]
+    return [(render(*c[:3], i, len(cards)), c[3], False) for i, c in enumerate(cards)]
 
 
 def reddit_slides(sub, author, title, story):
@@ -326,10 +329,12 @@ def match_words(spoken, boxes):
     return hits
 
 
+def ts(s):
+    return f"{int(s // 3600)}:{int(s % 3600 // 60):02}:{s % 60:05.2f}"
+
+
 def write_ass(spoken, boxes, path: Path):
     """Highlighter: a translucent gold box over each word on the card while it is spoken."""
-    def ts(s):
-        return f"{int(s // 3600)}:{int(s % 3600 // 60):02}:{s % 60:05.2f}"
     hits, events = match_words(spoken, boxes), []
     for n, (start, end, (x, y, w, h, _)) in enumerate(hits):
         stop = hits[n + 1][0] if n + 1 < len(hits) else end + 0.3  # hold until the next word starts
@@ -381,10 +386,9 @@ for text, path in json.load(sys.stdin):
 
 def kokoro(items):
     """Narrate with Kokoro in its own Python (it doesn't install on 3.14). One process for all slides, so the model
-    loads once. Gives no word timings, so only for cards without a highlighter."""
+    loads once. Gives no word timings, so no highlighter."""
     subprocess.run([KOKORO_PY, "-c", KOKORO_SCRIPT, KOKORO_VOICE, KOKORO_SPEED], check=True, text=True,
                    input=json.dumps([[t, str(p)] for t, p in items]))
-    return [[] for _ in items]
 
 
 async def voice(items):
@@ -425,7 +429,7 @@ def add_music(video: Path):
         "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", video)
 
 
-def build(slides, caption: str, out: Path, pause=0.6, bg: Path | None = None, music=False, local_voice=False) -> Path:
+def build(slides, caption: str, out: Path, pause=0.6, bg: Path | None = None) -> Path:
     """slides: list of (PIL image, narration, word boxes or None). Each image is overlaid on the background while
     its narration plays; word boxes add a highlighter that follows the voice word by word.
     bg: a gameplay clip (muted, cropped to 9:16, looped, random start), or None for a plain colour."""
@@ -433,10 +437,7 @@ def build(slides, caption: str, out: Path, pause=0.6, bg: Path | None = None, mu
     out.mkdir(parents=True, exist_ok=True)
     for i, (img, _, _) in enumerate(slides):
         img.save(out / f"{i}.png")
-    local_voice = local_voice and KOKORO_PY.exists()
-    ext = "wav" if local_voice else "mp3"
-    items = [(t, out / f"{i}.{ext}") for i, (_, t, _) in enumerate(slides)]
-    timings = kokoro(items) if local_voice else asyncio.run(voice(items))
+    timings = asyncio.run(voice([(t, out / f"{i}.mp3") for i, (_, t, _) in enumerate(slides)]))
     t = random.uniform(0, duration(bg)) if bg else 0
     for i, (_, _, boxes) in enumerate(slides):
         subs = ""
@@ -445,7 +446,7 @@ def build(slides, caption: str, out: Path, pause=0.6, bg: Path | None = None, mu
             subs = f",ass={i}.ass"  # relative: ffmpeg runs inside `out`, avoids Windows path escaping
         src = (["-stream_loop", "-1", "-ss", f"{t:.3f}", "-i", bg] if bg
                else ["-f", "lavfi", "-i", f"color=c={BG.replace('#', '0x')}:s={W}x{H}:r=30"])
-        run(*src, "-loop", "1", "-framerate", "30", "-i", out / f"{i}.png", "-i", out / f"{i}.{ext}",
+        run(*src, "-loop", "1", "-framerate", "30", "-i", out / f"{i}.png", "-i", out / f"{i}.mp3",
             "-filter_complex", f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps=30[b];"
                                f"[b][1:v]overlay{subs},format=yuv420p[v];[2:a]{VOICE_FX},apad=pad_dur={pause}[a]",
             "-map", "[v]", "-map", "[a]", "-shortest", "-c:v", "libx264", "-preset", "veryfast",
@@ -454,9 +455,81 @@ def build(slides, caption: str, out: Path, pause=0.6, bg: Path | None = None, mu
     (out / "list.txt").write_text("".join(f"file '{(out / f'{i}.mp4').as_posix()}'\n" for i in range(len(slides))))
     video = out / "reel.mp4"
     run("-f", "concat", "-safe", "0", "-i", out / "list.txt", "-c", "copy", "-movflags", "+faststart", video)
-    if music:
-        add_music(video)
     (out / "caption.txt").write_text(caption, encoding="utf-8")
+    return video
+
+
+# camera moves on a still (zoompan expressions; n = frames in the shot), cycled so consecutive shots differ
+MOVES = [("1+0.12*on/{n}", "iw/2-iw/zoom/2", "ih/2-ih/zoom/2"),        # push in
+         ("1.12-0.12*on/{n}", "iw/2-iw/zoom/2", "ih/2-ih/zoom/2"),     # pull out
+         ("1.12", "(iw-iw/zoom)*on/{n}", "ih/2-ih/zoom/2"),             # pan right
+         ("1.12", "iw/2-iw/zoom/2", "(ih-ih/zoom)*(1-on/{n})")]         # tilt up
+
+
+def write_captions(scenes, starts, lengths, path: Path):
+    """Burned-in captions, a few words at a time. Kokoro gives no word timings, so each chunk gets a share of its
+    scene's audio in proportion to its length; close enough for short chunks."""
+    events = []
+    for sc, t0, dur in zip(scenes, starts, lengths):
+        chunks = pack(sc.narration.replace("{", "(").replace("}", ")"), lambda c: len(c.split()) <= 6)
+        total = sum(len(c) for c in chunks)
+        for c in chunks:
+            d = dur * len(c) / total
+            events.append(f"Dialogue: 0,{ts(t0)},{ts(t0 + d)},C,,0,0,0,,{c}")
+            t0 += d
+    path.write_text(f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {W}
+PlayResY: {H}
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: C,Segoe UI,68,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,{PAD},{PAD},620,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+""" + "\n".join(events) + "\n", encoding="utf-8")
+
+
+def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
+    """Animated story: one illustration per scene with a slow camera move, crossfades between shots, captions,
+    the narration, then a music bed. A painting that fails reuses the one before it (with a different move)."""
+    out = out.resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    seed = random.randrange(10**6)
+    arts = [paint(sc.art, seed) for sc in film.scenes]
+    shot = next((a for a in arts if a), None) or Image.new("RGB", (W, H), BG)
+    for i, a in enumerate(arts):
+        shot = a or shot
+        ImageOps.fit(shot, (W, H)).save(out / f"{i}.png")
+    ext = "wav" if KOKORO_PY.exists() else "mp3"
+    items = [(sc.narration, out / f"{i}.{ext}") for i, sc in enumerate(film.scenes)]
+    kokoro(items) if ext == "wav" else asyncio.run(voice(items))
+    spoken = [duration(p) for _, p in items]
+    lengths = [d + pause for d in spoken]
+    starts = [sum(lengths[:i]) for i in range(len(lengths))]
+    write_captions(film.scenes, starts, spoken, out / "captions.ass")
+
+    n_sc, graph = len(film.scenes), []
+    for i in range(n_sc):  # each shot runs `fade` longer so the next one can dissolve in over its tail
+        n = round((lengths[i] + (fade if i < n_sc - 1 else 0)) * 30)
+        z, x, y = (e.format(n=n) for e in MOVES[i % len(MOVES)])
+        graph.append(f"[{i}:v]scale={2 * W}:{2 * H},zoompan=z='{z}':x='{x}':y='{y}':d={n}:s={W}x{H}:fps=30,"
+                     f"setsar=1,format=yuv420p[v{i}]")  # 2x upscale first: zoompan jitters on a small image
+    last = "v0"
+    for i in range(1, n_sc):
+        graph.append(f"[{last}][v{i}]xfade=transition=fade:duration={fade}:offset={starts[i]:.3f}[x{i}]")
+        last = f"x{i}"
+    graph.append(f"[{last}]ass=captions.ass[v]")
+    graph += [f"[{n_sc + i}:a]apad=whole_dur={lengths[i]:.3f}[a{i}]" for i in range(n_sc)]
+    graph.append("".join(f"[a{i}]" for i in range(n_sc)) + f"concat=n={n_sc}:v=0:a=1,{VOICE_FX},aresample=48000[a]")
+    video = out / "reel.mp4"
+    run(*[a for i in range(n_sc) for a in ("-i", out / f"{i}.png")], *[a for _, p in items for a in ("-i", p)],
+        "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast",
+        "-crf", "20", "-c:a", "aac", "-movflags", "+faststart", video, cwd=out)
+    add_music(video)
+    (out / "caption.txt").write_text(film.caption, encoding="utf-8")
     return video
 
 
@@ -531,11 +604,9 @@ def main():
                       pause=0.15, bg=random.choice(clips) if clips else None)
     elif book:
         name = sys.argv[sys.argv.index("--book") + 1:][:1]
-        p = generate_book(history, name[0] if name and not name[0].startswith("--") else None)
-        seed = random.randrange(10**6)
-        arts = [paint(scene, seed) for scene in [p.cover_art] + [s.art for s in p.slides]]
-        caption, key = p.caption, p.topic
-        video = build(trivia_slides(p, p.book.upper(), arts), caption, out, music=True, local_voice=True)
+        film = generate_film(history, name[0] if name and not name[0].startswith("--") else None)
+        caption, key = film.caption, film.topic
+        video = build_film(film, out)
     else:
         p = generate(history)
         caption, key = p.caption, p.topic
