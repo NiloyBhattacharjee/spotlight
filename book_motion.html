@@ -3,8 +3,8 @@
   <head><meta charset="utf-8" /></head>
   <body style="margin: 0">
     <script type="module">
-      // Motion layer that reelbot --book draws over each animated book reel with mockingbird's `motion`:
-      // mist drifting along the bottom, a soft glow breathing in the sky, floating lamplight motes, a title card,
+      // Motion layer that reelbot --book draws over each animated book reel with mockingbird's `motion`: the
+      // book's weather (mist, snow, rain, embers or dust), a soft glow in the sky for some styles, a hook title card,
       // light leaks on each shot change, captions with a pill that follows the voice, vignette and grain.
       // reelbot fills CONFIG for each reel. Leave the import: motion swaps in the kit.
       import { hash, kit, page, THEMES } from "KIT";
@@ -12,8 +12,10 @@
       // ---- settings --------------------------------------------------------
       const THEME = { ...THEMES.night, display: "Segoe UI, sans-serif", serif: "Georgia, serif",
                       accent: "#F4B942", onAccent: "#1A1206" };
-      /** title, sub (author · year) and shots: seconds where each new illustration dissolves in. */
-      const { title: TITLE, sub: SUB, shots: SHOTS } = /*CONFIG*/{ title: "White Nights", sub: "Fyodor Dostoevsky · 1848", shots: [] };
+      /** title (the hook), sub (book · author, year), shots: seconds where each new illustration comes in,
+       *  air: mist | snow | rain | embers | dust | none, glow: a soft light at the top of the frame. */
+      const { title: TITLE, sub: SUB, shots: SHOTS, air: AIR, glow: GLOW } =
+        /*CONFIG*/{ title: "White Nights", sub: "Fyodor Dostoevsky · 1848", shots: [], air: "mist", glow: true };
       const TITLE_OUT = 3.4;
       // ----------------------------------------------------------------------
 
@@ -57,13 +59,43 @@
         });
       }
 
+      /** Snow drifting down, rain slanting through, or embers rising and flickering, at a few depths. */
+      function particles(k, t, kind) {
+        const { ctx, W, H, u } = k;
+        k.layer(() => {
+          if (kind === "embers") ctx.globalCompositeOperation = "lighter";
+          for (let i = 0; i < (kind === "rain" ? 140 : 70); i++) {
+            const depth = 0.3 + 0.7 * hash(i + 3);
+            const travel = t * (kind === "rain" ? 1400 : kind === "snow" ? 90 : 70) * depth * u;
+            const y = (((hash(i + 1) * H + (kind === "embers" ? -travel : travel)) % H) + H) % H;
+            const drift = kind === "rain" ? -0.25 * travel : Math.sin(t * (0.8 + depth) + i) * 18 * u;
+            const x = (((hash(i) * W + drift) % W) + W) % W;
+            ctx.beginPath();
+            if (kind === "rain") {
+              ctx.strokeStyle = `rgba(200,215,235,${0.28 * depth})`;
+              ctx.lineWidth = 2 * u * depth;
+              ctx.moveTo(x, y);
+              ctx.lineTo(x - 10 * u * depth, y + 42 * u * depth);
+              ctx.stroke();
+            } else {
+              const glow = kind === "snow" ? 0.6 * depth : (0.5 + 0.5 * Math.sin(t * 4 + i * 2.1)) * 0.85 * depth;
+              ctx.fillStyle = kind === "snow" ? `rgba(255,255,255,${glow})`
+                                              : `rgba(255,${(130 + 70 * hash(i + 7)) | 0},60,${glow})`;
+              ctx.arc(x, y, (kind === "snow" ? 6 : 3.5) * depth * u, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        });
+      }
+
       function draw(ctx, t, m) {
         const k = kit(ctx, t, m, THEME);
         const { W, H } = k;
 
-        skyGlow(k, t);
-        mist(k, t);
-        k.bokeh({ count: 14, color: "#FFD9A0", opacity: 0.16 });
+        if (GLOW) skyGlow(k, t);
+        if (AIR === "mist") mist(k, t);
+        if (AIR === "dust") k.bokeh({ count: 14, color: "#FFD9A0", opacity: 0.16 });
+        if (AIR === "snow" || AIR === "rain" || AIR === "embers") particles(k, t, AIR);
 
         // A warm light leak as each new illustration dissolves in, kept gentle.
         for (const at of SHOTS) {

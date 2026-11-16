@@ -28,7 +28,7 @@ Posting goes to every platform that is set up (env vars; one failing doesn't sto
     .venv-kokoro/Scripts/pip install kokoro soundfile en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
   python reelbot.py --demo       render a built-in trivia sample (no API calls) to test the pipeline
 """
-import asyncio, difflib, html, io, json, os, random, re, shutil, subprocess, sys, time
+import asyncio, base64, difflib, html, io, json, os, random, re, shutil, subprocess, sys, time
 import urllib.parse
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -36,6 +36,7 @@ from pathlib import Path
 import edge_tts, requests
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from pydantic import BaseModel
+from typing import Literal
 
 HERE = Path(__file__).parent
 VOICE = "en-US-AndrewMultilingualNeural"  # newer, more human voices: Andrew/Ava/Emma/BrianMultilingualNeural
@@ -51,9 +52,35 @@ SUBS = ["AmItheAsshole", "AITAH", "pettyrevenge", "ProRevenge", "MaliciousCompli
         "TrueOffMyChest"]
 MIN_WORDS, MAX_WORDS = 60, 1500  # source post length; Claude retells it in 150-300 words (about 60-110 s)
 TOP_WINDOW = "all"  # most upvoted of: hour, day, week, month, year, all
-# book reels: illustrations in one storybook-animation look, camera moves, a quiet music bed under the voice
-ART_STYLE = ("still from a 2D animated short film, hand-painted storybook illustration, textured brushwork, muted warm "
-             "palette, soft cinematic light, no text, no letters")
+# book reels: each one picks an animation style. art is the look of every illustration; fps is the camera's frame
+# rate (12 stutters like stop-motion); zoom how far each move travels; shake a hand-moved jitter in pixels; cut the
+# ffmpeg xfade between shots; glow a soft light at the top of the frame.
+STYLES = {
+    "3d animated film": dict(art="still frame from a 3D animated feature film, stylised expressive characters, soft "
+                                 "global illumination, rich colour, cinematic depth of field",
+                             fps=30, zoom=0.14, shake=0, cut="fade", glow=True),
+    "claymation": dict(art="claymation stop-motion film still, handmade plasticine characters with visible "
+                           "fingerprints, miniature handcrafted sets, soft studio lighting",
+                       fps=12, zoom=0.08, shake=3, cut="fadeblack", glow=False),
+    "anime": dict(art="hand-drawn anime feature film still, clean cel shading, lush painted backgrounds, dramatic light",
+                  fps=30, zoom=0.16, shake=0, cut="smoothleft", glow=True),
+    "paper cut-out": dict(art="layered paper cut-out animation still, textured construction paper, shadow-box depth, "
+                              "handcrafted miniature stage",
+                          fps=12, zoom=0.07, shake=2, cut="wipeleft", glow=False),
+    "ink wash": dict(art="ink wash animation still, flowing black ink and soft watercolour washes on textured paper, "
+                         "sparse colour",
+                     fps=30, zoom=0.10, shake=0, cut="dissolve", glow=False),
+    "noir graphic novel": dict(art="noir graphic novel panel, bold black inks, deep shadows, limited palette with one "
+                                   "red accent, halftone texture",
+                               fps=30, zoom=0.12, shake=0, cut="fadeblack", glow=False),
+    "storybook painting": dict(art="still from a 2D animated short film, hand-painted storybook illustration, textured "
+                                   "brushwork, muted warm palette, soft cinematic light",
+                               fps=30, zoom=0.12, shake=0, cut="fade", glow=True),
+    "candlelit oil painting": dict(art="classical oil painting brought to life, rich chiaroscuro, candlelight, visible "
+                                       "brushwork",
+                                   fps=30, zoom=0.10, shake=0, cut="dissolve", glow=False),
+}
+AIRS = ("mist", "snow", "rain", "embers", "dust", "none")  # drawn over every shot by book_motion.html
 KOKORO_PY = HERE / ".venv-kokoro" / "Scripts" / "python.exe"
 KOKORO_VOICE, KOKORO_SPEED = "am_michael", "1.2"  # male; af_heart is the best-rated (female)
 CHATTERBOX_PY = HERE / ".venv-chatterbox" / "Scripts" / "python.exe"
@@ -102,6 +129,8 @@ class Scene(BaseModel):
 
 class Film(BaseModel):
     topic: str      # "<book> by <author>", for the history list
+    style: Literal[tuple(STYLES)]
+    air: Literal[AIRS]
     hook: str       # on-screen text over the opening seconds
     title: str
     author: str
@@ -129,7 +158,7 @@ Pick ONE specific, surprising topic. Do not repeat any of these past topics: {hi
 - caption: a hook line, one line of context, then 6-8 relevant hashtags.""", Post)
 
 
-def generate_film(history: list[str], book: str | None = None, feedback: str = "") -> Film:
+def generate_film(history: list[str], book: str | None = None, feedback: str = "", recent_styles=()) -> Film:
     pick = f"The book is {book}." if book else (
         "Pick ONE classic book published before 1929 that people have heard of but not read, with a story that makes "
         "people stop scrolling: obsession, betrayal, crime, madness, survival, forbidden love, or an author whose "
@@ -150,6 +179,10 @@ Write for the ear: varied sentence lengths, concrete images, plain words. Every 
 quotes, dates or numbers; if unsure, leave it out.
 
 - topic: "<title> by <author>". title, author, and year: the year it was first published.
+- style: the animation look for this reel, one of: {", ".join(STYLES)}. Fit the book's mood, and don't reuse a
+  style from the last few reels ({", ".join(recent_styles) or "none yet"}).
+- air: what drifts over every shot, from the book's setting: mist, snow, rain, embers (fire, candles, war),
+  dust (sunlit rooms, deserts) or none.
 - hook: on-screen text for the first three seconds, at most 7 words, that makes people need the rest without
   giving away the ending ("He fell in love in four nights.", "She married the man who ruined her."). True to the book.
 - scenes: 8 to 11 in order, together forming the script. narration is 1-2 of its sentences. art describes the one
@@ -159,12 +192,41 @@ quotes, dates or numbers; if unsure, leave it out.
 {feedback}""", Film)
 
 
-def paint(scene: str, seed: int):
-    """AI art from Pollinations (free, no key; anonymous images carry a small logo). One seed per reel keeps the look
-    consistent. Returns None on failure."""
+def paint(scene: str, seed: int, style: str = STYLES["storybook painting"]["art"]):
+    """One illustration, from Cloudflare when it's set up (CF_ACCOUNT_ID, CF_API_TOKEN), else Pollinations.
+    One seed per reel keeps the look consistent. Returns None on failure: the scene reuses the painting before it."""
+    if os.environ.get("CF_ACCOUNT_ID") and os.environ.get("CF_API_TOKEN"):
+        return cloudflare_art(f"{scene}, {style}, no text, no letters", seed)
+    return pollinations_art(f"{scene}, {style}, no text, no letters", seed)
+
+
+def cloudflare_art(prompt: str, seed: int):
+    """Flux 2 Klein on Cloudflare Workers AI: no logo and no wait. A portrait image costs about 250 of the 10,000
+    neurons Cloudflare gives free each day, so two book reels a day stay free."""
+    url = (f"https://api.cloudflare.com/client/v4/accounts/{os.environ['CF_ACCOUNT_ID']}"
+           "/ai/run/@cf/black-forest-labs/flux-2-klein-4b")
+    form = {"prompt": prompt, "width": "1088", "height": "1920", "seed": str(seed)}
+    for _ in range(3):
+        try:
+            r = requests.post(url, headers={"Authorization": f"Bearer {os.environ['CF_API_TOKEN']}"}, timeout=180,
+                              files={k: (None, v) for k, v in form.items()})  # multipart form, as the model expects
+            if r.status_code == 429 or r.status_code >= 500:  # busy: try again shortly
+                time.sleep(10)
+                continue
+            fb(r)
+            return Image.open(io.BytesIO(base64.b64decode(r.json()["result"]["image"]))).convert("RGB")
+        except (requests.RequestException, RuntimeError, KeyError, ValueError, OSError) as e:
+            print(f"no art for {prompt[:60]!r}: {e}")
+            return None
+    print(f"no art for {prompt[:60]!r}: Cloudflare still busy after retries")
+    return None
+
+
+def pollinations_art(scene: str, seed: int):  # scene: the whole prompt
+    """AI art from Pollinations (free, no key; anonymous images carry a small logo)."""
     for _ in range(4):
         try:
-            r = requests.get("https://image.pollinations.ai/prompt/" + urllib.parse.quote(f"{scene}, {ART_STYLE}", safe=""),
+            r = requests.get("https://image.pollinations.ai/prompt/" + urllib.parse.quote(scene, safe=""),
                              params={"width": W, "height": H, "seed": seed, "nologo": "true"}, timeout=180)
             if r.status_code in (402, 429) or r.status_code >= 500:  # anonymous limit (1 image / 45 s, sent as 402) or overload
                 time.sleep(46)  # ponytail: minutes of waiting per reel; a pollen key from enter.pollinations.ai lifts it
@@ -551,10 +613,10 @@ def build(slides, caption: str, out: Path, pause=0.6, bg: Path | None = None) ->
 
 
 # camera moves on a still (zoompan expressions; n = frames in the shot), cycled so consecutive shots differ
-MOVES = [("1+0.12*on/{n}", "iw/2-iw/zoom/2", "ih/2-ih/zoom/2"),        # push in
-         ("1.12-0.12*on/{n}", "iw/2-iw/zoom/2", "ih/2-ih/zoom/2"),     # pull out
-         ("1.12", "(iw-iw/zoom)*on/{n}", "ih/2-ih/zoom/2"),             # pan right
-         ("1.12", "iw/2-iw/zoom/2", "(ih-ih/zoom)*(1-on/{n})")]         # tilt up
+MOVES = [("1+{a}*on/{n}", "iw/2-iw/zoom/2", "ih/2-ih/zoom/2"),          # push in   (a = the style's zoom)
+         ("1+{a}-{a}*on/{n}", "iw/2-iw/zoom/2", "ih/2-ih/zoom/2"),     # pull out
+         ("1+{a}", "(iw-iw/zoom)*on/{n}", "ih/2-ih/zoom/2"),            # pan right
+         ("1+{a}", "iw/2-iw/zoom/2", "(ih-ih/zoom)*(1-on/{n})")]        # tilt up
 
 
 def caption_groups(words):
@@ -641,7 +703,8 @@ def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
     out = out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     seed = random.randrange(10**6)
-    arts = [paint(sc.art, seed) for sc in film.scenes]
+    look = STYLES[film.style]
+    arts = [paint(sc.art, seed, look["art"]) for sc in film.scenes]
     shot = next((a for a in arts if a), None) or Image.new("RGB", (W, H), BG)
     for i, a in enumerate(arts):
         shot = a or shot
@@ -660,13 +723,15 @@ def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
 
     n_sc, graph = len(film.scenes), []
     for i in range(n_sc):  # each shot runs `fade` longer so the next one can dissolve in over its tail
-        n = round((lengths[i] + (fade if i < n_sc - 1 else 0)) * 30)
-        z, x, y = (e.format(n=n) for e in MOVES[i % len(MOVES)])
-        graph.append(f"[{i}:v]scale={2 * W}:{2 * H},zoompan=z='{z}':x='{x}':y='{y}':d={n}:s={W}x{H}:fps=30,"
-                     f"setsar=1,format=yuv420p[v{i}]")  # 2x upscale first: zoompan jitters on a small image
+        n = round((lengths[i] + (fade if i < n_sc - 1 else 0)) * look["fps"])
+        z, x, y = (e.format(n=n, a=look["zoom"]) for e in MOVES[i % len(MOVES)])
+        if look["shake"]:  # a hand-moved camera: a small different nudge every frame
+            x, y = f"{x}+{look['shake']}*sin(on*12.9898)", f"{y}+{look['shake']}*sin(on*78.233)"
+        graph.append(f"[{i}:v]scale={2 * W}:{2 * H},zoompan=z='{z}':x='{x}':y='{y}':d={n}:s={W}x{H}:fps={look['fps']},"
+                     f"fps=30,setsar=1,format=yuv420p[v{i}]")  # 2x upscale first: zoompan jitters on a small image
     last = "v0"
     for i in range(1, n_sc):
-        graph.append(f"[{last}][v{i}]xfade=transition=fade:duration={fade}:offset={starts[i]:.3f}[x{i}]")
+        graph.append(f"[{last}][v{i}]xfade=transition={look['cut']}:duration={fade}:offset={starts[i]:.3f}[x{i}]")
         last = f"x{i}"
     graph.append(f"[{last}]{'null' if animate else 'ass=captions.ass'}[v]")
     graph += [f"[{n_sc + i}:a]apad=whole_dur={lengths[i]:.3f}[a{i}]" for i in range(n_sc)]
@@ -678,7 +743,7 @@ def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
     add_music(video)
     if animate:  # title, captions that follow the voice, mist and light, drawn over the shots
         config = {"title": film.hook, "sub": f"{film.title} · {film.author}, {film.year}",
-                  "shots": [round(x, 2) for x in starts[1:]]}
+                  "shots": [round(x, 2) for x in starts[1:]], "air": film.air, "glow": look["glow"]}
         (out / "motion.html").write_text((HERE / "book_motion.html").read_text(encoding="utf-8").replace(
             "/*CONFIG*/{", f"{json.dumps(config, ensure_ascii=False)} || {{", 1), encoding="utf-8")
         video = out / "reel.mp4"
@@ -930,6 +995,7 @@ def main():
     hist_file = HERE / ("reddit_history.json" if reddit else "book_history.json" if book else "history.json")
     history = json.loads(hist_file.read_text()) if hist_file.exists() else []
     out = HERE / "out" / time.strftime("%Y-%m-%d_%H%M%S")
+    extra = {}
     if not demo:
         refresh_stats()
     feedback = track_record(posts())
@@ -956,8 +1022,10 @@ def main():
                       pause=0.15, bg=random.choice(clips) if clips else None)
     elif book:
         name = sys.argv[sys.argv.index("--book") + 1:][:1]
-        film = generate_film(history, name[0] if name and not name[0].startswith("--") else None, feedback)
-        caption, key, what = film.caption, film.topic, f'{film.topic}, hook "{film.hook}"'
+        recent = [p["style"] for p in posts()[-3:] if p.get("style")]
+        film = generate_film(history, name[0] if name and not name[0].startswith("--") else None, feedback, recent)
+        caption, key, what = film.caption, film.topic, f'{film.topic} as {film.style}, hook "{film.hook}"'
+        extra = {"style": film.style}
         video = build_film(film, out)
     else:
         p = generate(history)
@@ -971,7 +1039,7 @@ def main():
     if not ids:
         sys.exit("posted nowhere: set up at least one platform (see the top of reelbot.py)")
     hist_file.write_text(json.dumps(history + [key], indent=1))
-    POSTS.write_text(json.dumps(posts() + [{"what": what, "at": time.time(), "ids": ids}], indent=1), encoding="utf-8")
+    POSTS.write_text(json.dumps(posts() + [{"what": what, "at": time.time(), "ids": ids, **extra}], indent=1), encoding="utf-8")
 
 
 def demo_feedback():
