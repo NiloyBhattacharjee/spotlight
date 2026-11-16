@@ -16,8 +16,8 @@ from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
 
 HERE = Path(__file__).parent
-VOICE = "en-US-BrianMultilingualNeural"  # newer, more human voices: Andrew/Ava/Emma/BrianMultilingualNeural
-RATE = "+50%"  # 1.5x speed
+VOICE = "en-US-AndrewMultilingualNeural"  # newer, more human voices: Andrew/Ava/Emma/BrianMultilingualNeural
+RATE = "+20%"  # faster reads rushed and robotic
 # voice polish: cut rumble, gentle compression for a fuller, steadier voice, then Instagram's -14 LUFS loudness
 VOICE_FX = "highpass=f=70,bass=g=2:f=160,treble=g=-2:f=7000,acompressor=threshold=-20dB:ratio=3:attack=5:release=150:makeup=2,loudnorm=I=-14:TP=-1.5:LRA=7"
 GRAPH = "v24.0"
@@ -39,7 +39,7 @@ def ask(prompt: str, schema):
     exe = shutil.which("claude")
     if not exe:
         sys.exit("Claude Code CLI not found: install it and run `claude` once to log in")
-    r = subprocess.run([exe, "-p", "--output-format", "json", "--json-schema", json.dumps(schema.model_json_schema()),
+    r = subprocess.run([exe, "-p", "--model", "sonnet", "--output-format", "json", "--json-schema", json.dumps(schema.model_json_schema()),
                         "--tools", "", "--strict-mcp-config", "--no-session-persistence"],
                        input=prompt, capture_output=True, text=True, encoding="utf-8")
     try:
