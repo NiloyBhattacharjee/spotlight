@@ -20,15 +20,12 @@ Posting goes to every platform that is set up (env vars; one failing doesn't sto
   --book draws its motion layer (book_motion.html: title, captions, mist, light) with mockingbird when installed,
   else burns plain captions in.
   add --dry-run to build without posting
-  --book narrates with Chatterbox (open-source, local, ~6x slower than real time on CPU) once set up with
-  mockingbird for its word timings, else Kokoro, else Edge. Both need Python 3.10-3.12:
-    py -3.11 -m venv .venv-chatterbox
-    .venv-chatterbox/Scripts/pip install chatterbox-tts
+  --book narrates with Kokoro (open-source, local) in the story's mood once set up, else Edge. Needs Python 3.10-3.12:
     py -3.11 -m venv .venv-kokoro
     .venv-kokoro/Scripts/pip install kokoro soundfile en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
   python reelbot.py --demo       render a built-in trivia sample (no API calls) to test the pipeline
 """
-import asyncio, base64, difflib, html, io, json, os, random, re, shutil, subprocess, sys, time
+import asyncio, base64, html, io, json, os, random, re, shutil, subprocess, sys, time
 import urllib.parse
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -62,20 +59,18 @@ STYLES = {
                         fps=30, zoom=0.06, shake=0, cut="fade", glow=False),
 }
 AIRS = ("mist", "snow", "rain", "embers", "dust", "none")  # drawn over every shot by book_motion.html
-# how the narrator sounds, per story. Chatterbox: exaggeration is emotional intensity (higher = more rise and fall),
-# a lower cfg slows the pacing and lets it breathe, temperature is how much the delivery varies. pause scales the
-# silences between sentences. pitch lowers the voice for darker stories (rubberband, speed and formants unchanged,
-# so it stays the same person and the captions stay in sync).
+# how the narrator sounds, per story: Kokoro's speed, how long the silences between sentences are, how far the voice
+# is lowered (rubberband: same speed and formants, so it stays one person and the captions stay in sync), and a
+# faint room echo for the creepypasta feel.
 MOODS = {
-    "somber": dict(exaggeration=0.55, cfg=0.3, temperature=0.85, pause=1.3, pitch=0.93),   # loss, death, regret
-    "eerie": dict(exaggeration=0.6, cfg=0.3, temperature=0.85, pause=1.35, pitch=0.92),    # horror, the uncanny
-    "tense": dict(exaggeration=0.8, cfg=0.4, temperature=0.9, pause=0.8, pitch=0.97),      # crime, danger, a chase
-    "tender": dict(exaggeration=0.6, cfg=0.35, temperature=0.85, pause=1.15, pitch=0.98),  # love, longing
-    "wry": dict(exaggeration=0.65, cfg=0.45, temperature=0.9, pause=0.9, pitch=1.0),       # satire, comedy, irony
+    "somber": dict(speed=0.95, pause=1.2, pitch=0.94, room=False),   # loss, death, regret
+    "eerie": dict(speed=0.92, pause=1.3, pitch=0.91, room=True),     # horror, the uncanny: a creepypasta narrator
+    "tense": dict(speed=1.05, pause=0.85, pitch=0.97, room=False),   # crime, danger, a chase
+    "tender": dict(speed=0.97, pause=1.1, pitch=0.97, room=False),   # love, longing
+    "wry": dict(speed=1.05, pause=0.9, pitch=1.0, room=False),       # satire, comedy, irony
 }
 KOKORO_PY = HERE / ".venv-kokoro" / "Scripts" / "python.exe"
-KOKORO_VOICE, KOKORO_SPEED = "am_michael", "1.2"  # male; af_heart is the best-rated (female)
-CHATTERBOX_PY = HERE / ".venv-chatterbox" / "Scripts" / "python.exe"
+KOKORO_VOICE = "am_onyx"  # deep American male; also try am_fenrir, bm_lewis or bm_george (b = British)
 MOCKINGBIRD = Path.home() / ".mockingbird" / "bin" / "mockingbird.cmd"
 MUSIC = HERE / "music"  # drop royalty-free tracks here (Pixabay Music, YouTube Audio Library); empty = synth drone
 
@@ -477,101 +472,54 @@ async def speak(text, mp3):
 
 
 KOKORO_SCRIPT = """
-import json, sys, numpy as np, soundfile as sf
+import json, re, sys, numpy as np, soundfile as sf
 from kokoro import KPipeline
-pipe = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
-out = []
-for text, path in json.load(sys.stdin):
-    audio, words, t, glue = [], [], 0.0, False
-    for r in pipe(text, voice=sys.argv[1], speed=float(sys.argv[2])):
-        for tk in r.tokens:
-            if tk.start_ts is None:
-                continue
-            if glue and words:  # no space before it: punctuation or a suffix, part of the last word
-                words[-1][1], words[-1][2] = t + tk.end_ts, words[-1][2] + tk.text
-            else:
-                words.append([t + tk.start_ts, t + tk.end_ts, tk.text])
-            glue = not tk.whitespace
-        audio.append(r.audio.numpy())
-        t += len(audio[-1]) / 24000
-    sf.write(path, np.concatenate(audio), 24000)
-    out.append(words)
-print(json.dumps(out))
-"""
-
-
-def kokoro(items):
-    """Narrate with Kokoro in its own Python (it doesn't install on 3.14). One process for all scenes, so the model
-    loads once. Returns each item's words as (start, end, word), like speak()."""
-    r = subprocess.run([KOKORO_PY, "-c", KOKORO_SCRIPT, KOKORO_VOICE, KOKORO_SPEED], check=True, text=True,
-                       capture_output=True, encoding="utf-8", input=json.dumps([[t, str(p)] for t, p in items]))
-    return json.loads(r.stdout.strip().splitlines()[-1])
-
-
-CHATTERBOX_SCRIPT = """
-import json, re, sys, torch, torchaudio
-from chatterbox.tts import ChatterboxTTS
-torch.set_num_threads(max(1, (__import__("os").cpu_count() or 2) // 2))  # physical cores
-model = ChatterboxTTS.from_pretrained(device="cpu")
-mood = json.loads(sys.argv[1])
-
-def trim(w):  # cut the silence Chatterbox leaves around a line, so the pauses are the ones chosen below
-    loud = (w.abs() > 0.02 * w.abs().max()).nonzero()
-    if not len(loud):
-        return w
-    pad = int(0.04 * model.sr)
-    return w[..., max(0, loud[0, -1].item() - pad):loud[-1, -1].item() + pad]
+voice, mood = sys.argv[1], json.loads(sys.argv[2])
+pipe = KPipeline(lang_code=voice[0], repo_id="hexgrad/Kokoro-82M")  # a = American, b = British voices
 
 def rest(sentence):  # seconds of silence after a sentence, from how it ends
     end = sentence.rstrip(" \\"'”’)")
     base = 0.75 if end.endswith(("...", "…")) else 0.55 if end.endswith("?") else 0.4 if end.endswith("!") else 0.45
     return base * mood["pause"]
 
+out = []
 for text, path in json.load(sys.stdin):
-    # one sentence at a time: each gets its own rise and fall, with a real pause after it
-    parts = []
-    for sentence in [x for x in re.split(r"(?<=[.!?…])\\s+", text.strip()) if x]:
-        parts += [trim(model.generate(sentence, exaggeration=mood["exaggeration"], cfg_weight=mood["cfg"],
-                                      temperature=mood["temperature"])),
-                  torch.zeros(1, int(model.sr * rest(sentence)))]
-    torchaudio.save(path, torch.cat(parts[:-1], dim=1), model.sr)
+    audio, words, t = [], [], 0.0
+    for sentence in [x for x in re.split(r"(?<=[.!?…])\\s+", text.strip()) if x]:  # each its own rise and fall
+        chunk, local, tt, glue = [], [], 0.0, False
+        for r in pipe(sentence, voice=voice, speed=mood["speed"]):
+            for tk in r.tokens:
+                if tk.start_ts is None:
+                    continue
+                if glue and local:  # no space before it: punctuation or a suffix, part of the last word
+                    local[-1][1], local[-1][2] = tt + tk.end_ts, local[-1][2] + tk.text
+                else:
+                    local.append([tt + tk.start_ts, tt + tk.end_ts, tk.text])
+                glue = not tk.whitespace
+            chunk.append(r.audio.numpy())
+            tt += len(chunk[-1]) / 24000
+        a = np.concatenate(chunk)
+        loud = np.flatnonzero(np.abs(a) > 0.02 * np.abs(a).max())  # trim Kokoro's own silence, keep 40 ms
+        lo, hi = (max(0, loud[0] - 960), min(len(a), loud[-1] + 960)) if len(loud) else (0, len(a))
+        audio.append(a[lo:hi])
+        words += [[t + w0 - lo / 24000, t + w1 - lo / 24000, w] for w0, w1, w in local]
+        t += (hi - lo) / 24000
+        audio.append(np.zeros(int(24000 * rest(sentence)), dtype=np.float32))
+        t += len(audio[-1]) / 24000
+    sf.write(path, np.concatenate(audio[:-1]), 24000)  # no pause after the last one: the scene gap follows
+    out.append(words)
+print(json.dumps(out))
 """
 
 
-def chatterbox(items, mood: str = "somber"):
-    """Narrate with Chatterbox in its own Python, one process so the model loads once, delivered in the story's
-    mood. It gives no word timings, so each scene is transcribed with mockingbird and the heard words are matched
-    back to the script."""
-    r = subprocess.run([CHATTERBOX_PY, "-c", CHATTERBOX_SCRIPT, json.dumps(MOODS[mood])], capture_output=True,
-                       text=True, encoding="utf-8",
+def kokoro(items, mood: str = "somber"):
+    """Narrate with Kokoro in its own Python (it doesn't install on 3.14), one sentence at a time with real pauses,
+    in the story's mood. One process for all scenes, so the model loads once. Returns each item's words as
+    (start, end, word), like speak()."""
+    r = subprocess.run([KOKORO_PY, "-c", KOKORO_SCRIPT, KOKORO_VOICE, json.dumps(MOODS[mood])], check=True,
+                       text=True, capture_output=True, encoding="utf-8",
                        input=json.dumps([[t, str(p)] for t, p in items]))
-    if r.returncode:
-        raise RuntimeError(f"chatterbox failed: {r.stderr[-2000:]}")
-    return [align(text, heard(path)) for text, path in items]
-
-
-def heard(path) -> list:
-    """Each word mockingbird hears in the file, as (start, end, word)."""
-    out = subprocess.run([MOCKINGBIRD, "transcribe", str(path), "--words"], capture_output=True, text=True,
-                         encoding="utf-8", check=True).stdout
-    return [(int(a) * 60 + float(b), int(c) * 60 + float(d), w)
-            for a, b, c, d, w in re.findall(r"\[(\d+):([\d.]+)-(\d+):([\d.]+)\]\s+(\S+)", out)]
-
-
-def align(text: str, spoken: list) -> list:
-    """The script's own words with the times they were heard at, so captions never show a transcription slip.
-    Misheard or unheard words share out the time of the stretch they fall in."""
-    words, norm = text.split(), lambda w: re.sub(r"\W", "", w.lower())
-    out = []
-    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, [norm(w) for w in words], [norm(h[2]) for h in spoken],
-                                                       autojunk=False).get_opcodes():
-        if tag == "equal":
-            out += [(spoken[j][0], spoken[j][1], words[i]) for i, j in zip(range(i1, i2), range(j1, j2))]
-        elif i2 > i1:
-            a = spoken[j1][0] if j2 > j1 else (out[-1][1] if out else 0.0)
-            step = ((spoken[j2 - 1][1] if j2 > j1 else a) - a) / (i2 - i1)
-            out += [(a + k * step, a + (k + 1) * step, words[i1 + k]) for k in range(i2 - i1)]
-    return out
+    return json.loads(r.stdout.strip().splitlines()[-1])
 
 
 async def voice(items):
@@ -599,16 +547,34 @@ def drone(d: float) -> str:
             "lowpass=f=1200,aecho=0.8:0.7:600|1100:0.3|0.2")
 
 
-def add_music(video: Path):
-    """Quiet bed under the narration: a random track from music/ (looped), else the synth drone."""
+# background sound for each setting (the `air` a book reel picks), synthesized from noise: no samples, no licence
+AMBIENCE = {
+    "rain": "anoisesrc=c=pink:r=48000:a=0.6,highpass=f=500,lowpass=f=8000",                     # steady rain
+    "snow": "anoisesrc=c=brown:r=48000:a=0.8,lowpass=f=600,tremolo=f=0.12:d=0.7",               # wind gusting
+    "mist": "anoisesrc=c=brown:r=48000:a=0.6,lowpass=f=350,tremolo=f=0.1:d=0.5",                # a soft breeze
+    "embers": ("anoisesrc=c=brown:r=48000:a=0.5,lowpass=f=300[roar];"                           # a fire: low roar
+               "aevalsrc='if(lt(random(0),0.003),(random(1)-0.5)*1.5,0)':s=48000,highpass=f=900[pop];"  # + crackle
+               "[roar][pop]amix=inputs=2:normalize=0"),
+    "dust": "anoisesrc=c=brown:r=48000:a=0.4,lowpass=f=200",                                    # quiet room tone
+}
+
+
+def add_music(video: Path, air: str = "none"):
+    """Quiet beds under the narration: a random track from music/ (looped) or the synth drone, and the setting's
+    ambience (rain, wind, fire...) just under that."""
     d = duration(video)
     tracks = [p for p in MUSIC.glob("*") if p.suffix.lower() in (".mp3", ".wav", ".ogg", ".m4a", ".flac")]
     src = ["-stream_loop", "-1", "-i", random.choice(tracks)] if tracks else ["-f", "lavfi", "-i", drone(d)]
+    fades = f"afade=t=in:d=2,afade=t=out:st={max(d - 3, 0):.2f}:d=3"
+    graph = f"[1:a]atrim=0:{d:.2f},loudnorm=I=-32:TP=-8,{fades}[m];"
+    if air in AMBIENCE:
+        src += ["-f", "lavfi", "-i", AMBIENCE[air]]
+        graph += f"[2:a]atrim=0:{d:.2f},loudnorm=I=-33:TP=-10,{fades}[n];[0:a][m][n]amix=inputs=3"
+    else:
+        graph += "[0:a][m]amix=inputs=2"
     voice_only = video.with_name("voice_only.mp4")
     video.replace(voice_only)
-    run("-i", voice_only, *src, "-filter_complex",
-        f"[1:a]atrim=0:{d:.2f},loudnorm=I=-32:TP=-8,afade=t=in:d=2,afade=t=out:st={max(d - 3, 0):.2f}:d=3[m];"
-        "[0:a][m]amix=inputs=2:duration=first:normalize=0,aresample=48000[a]",
+    run("-i", voice_only, *src, "-filter_complex", graph + ":duration=first:normalize=0,aresample=48000[a]",
         "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", video)
 
 
@@ -740,11 +706,9 @@ def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
     for i, a in enumerate(arts):
         shot = a or shot
         ImageOps.fit(shot, (W, H)).save(out / f"{i}.png")
-    engine = (chatterbox if CHATTERBOX_PY.exists() and MOCKINGBIRD.exists() else kokoro if KOKORO_PY.exists()
-              else lambda items: asyncio.run(voice(items)))
-    items = [(sc.narration, out / f"{i}.{'mp3' if engine.__name__ == '<lambda>' else 'wav'}")
-             for i, sc in enumerate(film.scenes)]
-    timings = engine(items, film.mood) if engine is chatterbox else engine(items)
+    local = KOKORO_PY.exists()
+    items = [(sc.narration, out / f"{i}.{'wav' if local else 'mp3'}") for i, sc in enumerate(film.scenes)]
+    timings = kokoro(items, film.mood) if local else asyncio.run(voice(items))
     lengths = [duration(p) + pause for _, p in items]
     starts = [sum(lengths[:i]) for i in range(len(lengths))]
     words = [(t0 + a, t0 + b, w) for t0, spoken in zip(starts, timings) for a, b, w in spoken]
@@ -765,15 +729,16 @@ def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
         graph.append(f"[{last}][v{i}]xfade=transition={look['cut']}:duration={fade}:offset={starts[i]:.3f}[x{i}]")
         last = f"x{i}"
     graph.append(f"[{last}]{'null' if animate else 'ass=captions.ass'}[v]")
-    pitch = MOODS[film.mood]["pitch"] if engine is chatterbox else 1.0
-    lower = f"rubberband=pitch={pitch}:formant=preserved," if pitch != 1.0 else ""  # a deeper voice, same timing
+    mood = MOODS[film.mood] if local else dict(pitch=1.0, room=False)
+    lower = (f"rubberband=pitch={mood['pitch']}:formant=preserved," if mood["pitch"] != 1.0 else "")  # deeper, same timing
+    lower += "aecho=0.85:0.5:45|90:0.15|0.1," if mood["room"] else ""  # a faint room around the voice
     graph += [f"[{n_sc + i}:a]{lower}apad=whole_dur={lengths[i]:.3f}[a{i}]" for i in range(n_sc)]
     graph.append("".join(f"[a{i}]" for i in range(n_sc)) + f"concat=n={n_sc}:v=0:a=1,{VOICE_FX},aresample=48000[a]")
     video = out / ("base.mp4" if animate else "reel.mp4")
     run(*[a for i in range(n_sc) for a in ("-i", out / f"{i}.png")], *[a for _, p in items for a in ("-i", p)],
         "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast",
         "-crf", "20", "-c:a", "aac", "-movflags", "+faststart", video, cwd=out)
-    add_music(video)
+    add_music(video, film.air)
     if animate:  # title, captions that follow the voice, mist and light, drawn over the shots
         config = {"title": film.hook, "sub": f"{film.title} · {film.author}, {film.year}",
                   "shots": [round(x, 2) for x in starts[1:]], "air": film.air, "glow": look["glow"]}
@@ -1083,15 +1048,6 @@ def demo_feedback():
     assert [ln.split(":")[0] for ln in lines] == ["- book 1", "- book 4", "- book 8", "- book 7", "- book 2",
                                                 "- book 0", "- book 9", "- book 5"], lines  # top 5, bottom 3
     assert "9 s average watch" in lines[0] and track_record(log[:2]) == ""
-
-
-def demo_align():
-    heard_ = [(0.0, 0.3, "Within"), (0.3, 0.4, "a"), (0.4, 0.6, "year,"), (0.7, 0.9, "let"), (0.9, 1.0, "out"),
-              (1.1, 1.5, "Dostovsky"), (1.5, 1.6, "eighteen"), (1.6, 1.9, "forty-eight.")]
-    got = align("Within a year, led out Dostoevsky 1848.", heard_)
-    assert [w for _, _, w in got] == ["Within", "a", "year,", "led", "out", "Dostoevsky", "1848."], got
-    want = [(0.7, 0.9), (1.1, 1.5), (1.5, 1.9)]  # "led", "Dostoevsky", "1848." get their misheard stretches
-    assert all(abs(a - x) < 1e-6 and abs(b - y) < 1e-6 for (a, b, _), (x, y) in zip([got[3], got[5], got[6]], want)), got
 
 
 if __name__ == "__main__":
