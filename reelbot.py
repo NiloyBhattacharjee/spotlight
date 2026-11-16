@@ -569,13 +569,33 @@ def add_music(video: Path, air: str = "none"):
     graph = f"[1:a]atrim=0:{d:.2f},loudnorm=I=-32:TP=-8,{fades}[m];"
     if air in AMBIENCE:
         src += ["-f", "lavfi", "-i", AMBIENCE[air]]
-        graph += f"[2:a]atrim=0:{d:.2f},loudnorm=I=-33:TP=-10,{fades}[n];[0:a][m][n]amix=inputs=3"
+        graph += f"[2:a]atrim=0:{d:.2f},loudnorm=I=-33:TP=-9,{fades}[n];[0:a][m][n]amix=inputs=3"
     else:
         graph += "[0:a][m]amix=inputs=2"
     voice_only = video.with_name("voice_only.mp4")
     video.replace(voice_only)
     run("-i", voice_only, *src, "-filter_complex", graph + ":duration=first:normalize=0,aresample=48000[a]",
         "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", video)
+    level(video)
+
+
+def loudness(path) -> float:
+    """Integrated loudness in LUFS."""
+    err = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(path), "-af", "ebur128", "-f", "null", "-"],
+                         capture_output=True, text=True, encoding="utf-8").stderr
+    return float(re.findall(r"I:\s+(-?[\d.]+) LUFS", err)[-1])
+
+
+def level(video: Path, target=-14.0):
+    """Bring the finished mix to Instagram's -14 LUFS: measure it, apply the exact gain, limit the peaks.
+    (One-pass loudnorm lands a dB or two short on mixes with long quiet pauses.)"""
+    gain = target - loudness(video)
+    if abs(gain) < 0.3:
+        return
+    mixed = video.with_name("unleveled.mp4")
+    video.replace(mixed)
+    run("-i", mixed, "-af", f"volume={gain:.2f}dB,alimiter=limit=0.89:level=false", "-c:v", "copy", "-c:a", "aac",
+        "-movflags", "+faststart", video)
 
 
 def build(slides, caption: str, out: Path, pause=0.6, bg: Path | None = None) -> Path:
