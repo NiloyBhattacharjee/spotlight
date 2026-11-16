@@ -163,20 +163,33 @@ def generate_film(history: list[str], book: str | None = None, feedback: str = "
         "Pick ONE classic book published before 1929 that people have heard of but not read, with a story that makes "
         "people stop scrolling: obsession, betrayal, crime, madness, survival, forbidden love, or an author whose "
         "own life was as wild as the book.")
-    return ask(f"""You write narration for short animated Instagram Reels in the style of TED-Ed's "Why should you
-read...?" videos. {pick} Do not repeat any of these past topics: {history[-60:] or "none yet"}.
+    return ask(f"""You write narration for short animated Instagram Reels that make people fall for classic books, the
+way a great storyteller would tell one to a friend. {pick} Do not repeat any of these past topics:
+{history[-60:] or "none yet"}.
 
 The script is 110-150 words (45-60 seconds spoken; shorter reels get watched to the end, which is what spreads
 them) and tells a story; it is not a summary or a list of lessons:
 - The first sentence must stop a scroll within two seconds: open cold inside the book's most shocking or vivid
   moment, in the present tense, as if it is happening now, like "Mounting his skinny steed, the protagonist of
   Don Quixote charges an army of giants." No greeting, no "in this video", no slow scene-setting.
-- Pull back: name the book and author, and the surprising life or times behind it.
-- What the book did that was new or daring, and what it was written against.
-- Its heart: the central characters or idea, shown through concrete moments rather than morals.
-- End on one resonant line about what the book says about being human. No call to action.
-Write for the ear: varied sentence lengths, concrete images, plain words. Every fact must be accurate: no invented
-quotes, dates or numbers; if unsure, leave it out.
+- Then pull back, as a twist rather than a resume: how this book came to exist, the author's surprising life or
+  times. Name the book and author naturally mid-story, never as "This is X by Y".
+- What made it daring in its day, and its heart: the characters, shown through concrete moments, not morals.
+- End on a line that lingers: something true about people, said simply, maybe turned back on the viewer. No
+  call to action, no lecture.
+
+The voice is everything. Write like someone leaning in to tell a friend a story they can't stop thinking about,
+not a documentary narrator and not an essay:
+- Warm, a little conspiratorial, wry where the story allows. Contractions (he's, didn't, she'd).
+- Rhythm: a long rolling sentence, then a short punch. Fragments are fine. So is starting with "And" or "But".
+- Once or twice, talk to the viewer directly or ask the question they're already asking ("You'd think he'd run.
+  He doesn't.", "Would you have waited?").
+- Senses over adjectives: the cold of the railing, the smell of the river, the sound of the drum before the volley.
+- Dashes and "..." where a speaker would pause for effect, sparingly; the narrator voice reads them as pauses.
+- None of the words that make writing sound machine-made: tapestry, delve, testament, timeless, profound, journey,
+  resonate, masterpiece, poignant, "a reminder that", "in a world where", "little did he know".
+- Read every line aloud in your head; if it sounds written rather than spoken, rewrite it.
+Every fact must be accurate: no invented quotes, dates or numbers; if unsure, leave it out.
 
 - topic: "<title> by <author>". title, author, and year: the year it was first published.
 - style: the animation look for this reel, one of: {", ".join(STYLES)}. Fit the book's mood, and don't reuse a
@@ -195,9 +208,10 @@ quotes, dates or numbers; if unsure, leave it out.
 def paint(scene: str, seed: int, style: str = STYLES["storybook painting"]["art"]):
     """One illustration, from Cloudflare when it's set up (CF_ACCOUNT_ID, CF_API_TOKEN), else Pollinations.
     One seed per reel keeps the look consistent. Returns None on failure: the scene reuses the painting before it."""
+    prompt = f"{scene}, {style}, period-accurate setting with no modern objects, no text, no letters"
     if os.environ.get("CF_ACCOUNT_ID") and os.environ.get("CF_API_TOKEN"):
-        return cloudflare_art(f"{scene}, {style}, no text, no letters", seed)
-    return pollinations_art(f"{scene}, {style}, no text, no letters", seed)
+        return cloudflare_art(prompt, seed)
+    return pollinations_art(prompt, seed)
 
 
 def cloudflare_art(prompt: str, seed: int):
@@ -702,6 +716,7 @@ def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
     reuses the one before it (with a different move)."""
     out = out.resolve()
     out.mkdir(parents=True, exist_ok=True)
+    (out / "script.json").write_text(film.model_dump_json(indent=1), encoding="utf-8")  # to read what was said
     seed = random.randrange(10**6)
     look = STYLES[film.style]
     arts = [paint(sc.art, seed, look["art"]) for sc in film.scenes]
