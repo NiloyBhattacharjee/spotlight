@@ -81,6 +81,17 @@ STYLES = {
                                    fps=30, zoom=0.10, shake=0, cut="dissolve", glow=False),
 }
 AIRS = ("mist", "snow", "rain", "embers", "dust", "none")  # drawn over every shot by book_motion.html
+# how the narrator sounds, per story. Chatterbox: exaggeration is emotional intensity (higher = more rise and fall),
+# a lower cfg slows the pacing and lets it breathe, temperature is how much the delivery varies. pause scales the
+# silences between sentences. pitch lowers the voice for darker stories (rubberband, speed and formants unchanged,
+# so it stays the same person and the captions stay in sync).
+MOODS = {
+    "somber": dict(exaggeration=0.55, cfg=0.3, temperature=0.85, pause=1.3, pitch=0.93),   # loss, death, regret
+    "eerie": dict(exaggeration=0.6, cfg=0.3, temperature=0.85, pause=1.35, pitch=0.92),    # horror, the uncanny
+    "tense": dict(exaggeration=0.8, cfg=0.4, temperature=0.9, pause=0.8, pitch=0.97),      # crime, danger, a chase
+    "tender": dict(exaggeration=0.6, cfg=0.35, temperature=0.85, pause=1.15, pitch=0.98),  # love, longing
+    "wry": dict(exaggeration=0.65, cfg=0.45, temperature=0.9, pause=0.9, pitch=1.0),       # satire, comedy, irony
+}
 KOKORO_PY = HERE / ".venv-kokoro" / "Scripts" / "python.exe"
 KOKORO_VOICE, KOKORO_SPEED = "am_michael", "1.2"  # male; af_heart is the best-rated (female)
 CHATTERBOX_PY = HERE / ".venv-chatterbox" / "Scripts" / "python.exe"
@@ -131,6 +142,7 @@ class Film(BaseModel):
     topic: str      # "<book> by <author>", for the history list
     style: Literal[tuple(STYLES)]
     air: Literal[AIRS]
+    mood: Literal[tuple(MOODS)]
     hook: str       # on-screen text over the opening seconds
     title: str
     author: str
@@ -194,6 +206,8 @@ Every fact must be accurate: no invented quotes, dates or numbers; if unsure, le
 - topic: "<title> by <author>". title, author, and year: the year it was first published.
 - style: the animation look for this reel, one of: {", ".join(STYLES)}. Fit the book's mood, and don't reuse a
   style from the last few reels ({", ".join(recent_styles) or "none yet"}).
+- mood: how the narrator should sound for this story: somber (loss, death, regret), eerie (horror, the uncanny),
+  tense (crime, danger), tender (love, longing) or wry (satire, comedy, irony).
 - air: what drifts over every shot, from the book's setting: mist, snow, rain, embers (fire, candles, war),
   dust (sunlit rooms, deserts) or none.
 - hook: on-screen text for the first three seconds, at most 7 words, that makes people need the rest without
@@ -515,19 +529,41 @@ def kokoro(items):
 
 
 CHATTERBOX_SCRIPT = """
-import json, sys, torch, torchaudio
+import json, re, sys, torch, torchaudio
 from chatterbox.tts import ChatterboxTTS
 torch.set_num_threads(max(1, (__import__("os").cpu_count() or 2) // 2))  # physical cores
 model = ChatterboxTTS.from_pretrained(device="cpu")
+mood = json.loads(sys.argv[1])
+
+def trim(w):  # cut the silence Chatterbox leaves around a line, so the pauses are the ones chosen below
+    loud = (w.abs() > 0.02 * w.abs().max()).nonzero()
+    if not len(loud):
+        return w
+    pad = int(0.04 * model.sr)
+    return w[..., max(0, loud[0, -1].item() - pad):loud[-1, -1].item() + pad]
+
+def rest(sentence):  # seconds of silence after a sentence, from how it ends
+    end = sentence.rstrip(" \\"'”’)")
+    base = 0.75 if end.endswith(("...", "…")) else 0.55 if end.endswith("?") else 0.4 if end.endswith("!") else 0.45
+    return base * mood["pause"]
+
 for text, path in json.load(sys.stdin):
-    torchaudio.save(path, model.generate(text, exaggeration=0.4, cfg_weight=0.5), model.sr)  # a calm narrator
+    # one sentence at a time: each gets its own rise and fall, with a real pause after it
+    parts = []
+    for sentence in [x for x in re.split(r"(?<=[.!?…])\\s+", text.strip()) if x]:
+        parts += [trim(model.generate(sentence, exaggeration=mood["exaggeration"], cfg_weight=mood["cfg"],
+                                      temperature=mood["temperature"])),
+                  torch.zeros(1, int(model.sr * rest(sentence)))]
+    torchaudio.save(path, torch.cat(parts[:-1], dim=1), model.sr)
 """
 
 
-def chatterbox(items):
-    """Narrate with Chatterbox in its own Python, one process so the model loads once. It gives no word timings,
-    so each scene is transcribed with mockingbird and the heard words are matched back to the script."""
-    r = subprocess.run([CHATTERBOX_PY, "-c", CHATTERBOX_SCRIPT], capture_output=True, text=True, encoding="utf-8",
+def chatterbox(items, mood: str = "somber"):
+    """Narrate with Chatterbox in its own Python, one process so the model loads once, delivered in the story's
+    mood. It gives no word timings, so each scene is transcribed with mockingbird and the heard words are matched
+    back to the script."""
+    r = subprocess.run([CHATTERBOX_PY, "-c", CHATTERBOX_SCRIPT, json.dumps(MOODS[mood])], capture_output=True,
+                       text=True, encoding="utf-8",
                        input=json.dumps([[t, str(p)] for t, p in items]))
     if r.returncode:
         raise RuntimeError(f"chatterbox failed: {r.stderr[-2000:]}")
@@ -728,7 +764,7 @@ def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
               else lambda items: asyncio.run(voice(items)))
     items = [(sc.narration, out / f"{i}.{'mp3' if engine.__name__ == '<lambda>' else 'wav'}")
              for i, sc in enumerate(film.scenes)]
-    timings = engine(items)
+    timings = engine(items, film.mood) if engine is chatterbox else engine(items)
     lengths = [duration(p) + pause for _, p in items]
     starts = [sum(lengths[:i]) for i in range(len(lengths))]
     words = [(t0 + a, t0 + b, w) for t0, spoken in zip(starts, timings) for a, b, w in spoken]
@@ -749,7 +785,9 @@ def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
         graph.append(f"[{last}][v{i}]xfade=transition={look['cut']}:duration={fade}:offset={starts[i]:.3f}[x{i}]")
         last = f"x{i}"
     graph.append(f"[{last}]{'null' if animate else 'ass=captions.ass'}[v]")
-    graph += [f"[{n_sc + i}:a]apad=whole_dur={lengths[i]:.3f}[a{i}]" for i in range(n_sc)]
+    pitch = MOODS[film.mood]["pitch"] if engine is chatterbox else 1.0
+    lower = f"rubberband=pitch={pitch}:formant=preserved," if pitch != 1.0 else ""  # a deeper voice, same timing
+    graph += [f"[{n_sc + i}:a]{lower}apad=whole_dur={lengths[i]:.3f}[a{i}]" for i in range(n_sc)]
     graph.append("".join(f"[a{i}]" for i in range(n_sc)) + f"concat=n={n_sc}:v=0:a=1,{VOICE_FX},aresample=48000[a]")
     video = out / ("base.mp4" if animate else "reel.mp4")
     run(*[a for i in range(n_sc) for a in ("-i", out / f"{i}.png")], *[a for _, p in items for a in ("-i", p)],
