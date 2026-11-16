@@ -56,29 +56,19 @@ TOP_WINDOW = "all"  # most upvoted of: hour, day, week, month, year, all
 # rate (12 stutters like stop-motion); zoom how far each move travels; shake a hand-moved jitter in pixels; cut the
 # ffmpeg xfade between shots; glow a soft light at the top of the frame.
 STYLES = {
-    "3d animated film": dict(art="still frame from a 3D animated feature film, stylised expressive characters, soft "
-                                 "global illumination, rich colour, cinematic depth of field",
-                             fps=30, zoom=0.14, shake=0, cut="fade", glow=True),
-    "claymation": dict(art="claymation stop-motion film still, handmade plasticine characters with visible "
-                           "fingerprints, miniature handcrafted sets, soft studio lighting",
-                       fps=12, zoom=0.08, shake=3, cut="fadeblack", glow=False),
-    "anime": dict(art="hand-drawn anime feature film still, clean cel shading, lush painted backgrounds, dramatic light",
-                  fps=30, zoom=0.16, shake=0, cut="smoothleft", glow=True),
-    "paper cut-out": dict(art="layered paper cut-out animation still, textured construction paper, shadow-box depth, "
-                              "handcrafted miniature stage",
-                          fps=12, zoom=0.07, shake=2, cut="wipeleft", glow=False),
-    "ink wash": dict(art="ink wash animation still, flowing black ink and soft watercolour washes on textured paper, "
-                         "sparse colour",
-                     fps=30, zoom=0.10, shake=0, cut="dissolve", glow=False),
-    "noir graphic novel": dict(art="noir graphic novel panel, bold black inks, deep shadows, limited palette with one "
-                                   "red accent, halftone texture",
-                               fps=30, zoom=0.12, shake=0, cut="fadeblack", glow=False),
-    "storybook painting": dict(art="still from a 2D animated short film, hand-painted storybook illustration, textured "
-                                   "brushwork, muted warm palette, soft cinematic light",
-                               fps=30, zoom=0.12, shake=0, cut="fade", glow=True),
-    "candlelit oil painting": dict(art="classical oil painting brought to life, rich chiaroscuro, candlelight, visible "
-                                       "brushwork",
-                                   fps=30, zoom=0.10, shake=0, cut="dissolve", glow=False),
+    "flat vector": dict(art="flat 2D vector illustration in the style of an educational animated short, clean simple "
+                            "shapes, limited muted palette, soft gradients, subtle paper grain, minimal detail, "
+                            "characters with simple faces",
+                        fps=30, zoom=0.06, shake=0, cut="fade", glow=False),
+    "textured vector": dict(art="flat vector illustration with risograph grain texture, two or three bold colours, "
+                                "simple geometric shapes, strong silhouettes, editorial animation style",
+                            fps=30, zoom=0.07, shake=0, cut="smoothleft", glow=False),
+    "watercolour": dict(art="simple loose watercolour illustration, soft transparent washes, white paper showing "
+                            "through, fine ink outlines, gentle colours, minimal detail",
+                        fps=30, zoom=0.07, shake=0, cut="dissolve", glow=False),
+    "anime painting": dict(art="contemporary anime film background painting, painterly soft light, rich atmosphere, "
+                               "clean cel-shaded characters",
+                           fps=30, zoom=0.1, shake=0, cut="fade", glow=True),
 }
 AIRS = ("mist", "snow", "rain", "embers", "dust", "none")  # drawn over every shot by book_motion.html
 # how the narrator sounds, per story. Chatterbox: exaggeration is emotional intensity (higher = more rise and fall),
@@ -219,7 +209,7 @@ Every fact must be accurate: no invented quotes, dates or numbers; if unsure, le
 {feedback}""", Film)
 
 
-def paint(scene: str, seed: int, style: str = STYLES["storybook painting"]["art"]):
+def paint(scene: str, seed: int, style: str = STYLES["flat vector"]["art"]):
     """One illustration, from Cloudflare when it's set up (CF_ACCOUNT_ID, CF_API_TOKEN), else Pollinations.
     One seed per reel keeps the look consistent. Returns None on failure: the scene reuses the painting before it."""
     prompt = f"{scene}, {style}, period-accurate setting with no modern objects, no text, no letters"
