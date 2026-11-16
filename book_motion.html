@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /></head>
+  <body style="margin: 0">
+    <script type="module">
+      // Motion layer that reelbot --book draws over each animated book reel with mockingbird's `motion`:
+      // mist drifting along the bottom, a soft glow breathing in the sky, floating lamplight motes, a title card,
+      // light leaks on each shot change, captions with a pill that follows the voice, vignette and grain.
+      // reelbot fills CONFIG for each reel. Leave the import: motion swaps in the kit.
+      import { hash, kit, page, THEMES } from "KIT";
+
+      // ---- settings --------------------------------------------------------
+      const THEME = { ...THEMES.night, display: "Segoe UI, sans-serif", serif: "Georgia, serif",
+                      accent: "#F4B942", onAccent: "#1A1206" };
+      /** title, sub (author · year) and shots: seconds where each new illustration dissolves in. */
+      const { title: TITLE, sub: SUB, shots: SHOTS } = /*CONFIG*/{ title: "White Nights", sub: "Fyodor Dostoevsky · 1848", shots: [] };
+      const TITLE_OUT = 3.4;
+      // ----------------------------------------------------------------------
+
+      /** Soft flattened fog banks drifting right at different depths, lit with "screen" so they glow. */
+      function mist(k, t) {
+        const { ctx, W, H, u } = k;
+        k.layer(() => {
+          ctx.globalCompositeOperation = "screen";
+          for (let i = 0; i < 8; i++) {
+            const depth = 0.4 + hash(i) * 0.6;
+            const r = (380 + 340 * hash(i + 11)) * u;
+            const span = W + 2 * r;
+            const x = ((hash(i + 5) * span + t * (12 + 26 * depth) * u) % span) - r;
+            const y = H * (0.58 + 0.34 * hash(i + 9)) + Math.sin(t * 0.3 + i) * 28 * u;
+            const a = (0.07 + 0.08 * depth) * (0.75 + 0.25 * Math.sin(t * 0.5 + i * 1.7));
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.scale(1, 0.38);
+            const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+            g.addColorStop(0, `rgba(205,218,238,${a})`);
+            g.addColorStop(1, "rgba(205,218,238,0)");
+            ctx.fillStyle = g;
+            ctx.fillRect(-r, -r, 2 * r, 2 * r);
+            ctx.restore();
+          }
+        });
+      }
+
+      /** A pale lilac-peach glow that breathes at the top of the frame. */
+      function skyGlow(k, t) {
+        const { ctx, W, H } = k;
+        k.layer(() => {
+          ctx.globalCompositeOperation = "screen";
+          const a = 0.13 + 0.04 * Math.sin(t * 0.25);
+          const g = ctx.createLinearGradient(0, 0, 0, H * 0.45);
+          g.addColorStop(0, `rgba(255,214,190,${a})`);
+          g.addColorStop(0.5, `rgba(196,182,236,${a * 0.5})`);
+          g.addColorStop(1, "rgba(196,182,236,0)");
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, W, H * 0.45);
+        });
+      }
+
+      function draw(ctx, t, m) {
+        const k = kit(ctx, t, m, THEME);
+        const { W, H } = k;
+
+        skyGlow(k, t);
+        mist(k, t);
+        k.bokeh({ count: 14, color: "#FFD9A0", opacity: 0.16 });
+
+        // A warm light leak as each new illustration dissolves in, kept gentle.
+        for (const at of SHOTS) {
+          if (Math.abs(t - at) < 1.2) k.layer(() => { ctx.globalAlpha = 0.4; k.leak(at - 0.4, 1.2, ["#FFC98A", "#B9C6FF"]); });
+        }
+
+        // Title card over the cold open, for viewers scrolling with the sound off.
+        if (t < TITLE_OUT + 0.8) {
+          k.scrim({ y: H * 0.3, h: 620 * k.u, strength: 0.55, out: TITLE_OUT + 0.3 });
+          k.title({ lines: [[{ text: TITLE, italic: true, weight: 500, family: THEME.serif }]],
+                    at: 0.1, out: TITLE_OUT, y: H * 0.28, size: 128, style: "blur", glow: true });
+          k.title({ lines: [[{ text: SUB, weight: 600, color: THEME.accent }]],
+                    at: 0.6, out: TITLE_OUT, y: H * 0.28 + 130 * k.u, size: 46, style: "rise" });
+        }
+
+        k.scrim({ y: H * 0.68, h: 360 * k.u, strength: 0.35 });
+        k.captions({ y: H * 0.68, size: 70, upper: false });
+        k.vignette(0.55);
+        k.grain(0.05);
+      }
+
+      page(draw);
+    </script>
+  </body>
+</html>

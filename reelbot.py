@@ -6,6 +6,8 @@ Env (only for posting): IG_USER_ID, IG_TOKEN
   python reelbot.py --reddit     drama/revenge Reddit story reel (r/AmItheAsshole, r/pettyrevenge, ...), posted
   python reelbot.py --book       animated story of a public-domain classic, told TED-Ed style, posted
   python reelbot.py --book "White Nights"   the same, for a book you choose
+  --book draws its motion layer (book_motion.html: title, captions, mist, light) with mockingbird when installed,
+  else burns plain captions in.
   add --dry-run to build without posting
   --book narrates with Kokoro (open-source, local) once set up, else Edge. Setup, needs Python 3.10-3.12:
     py -3.11 -m venv .venv-kokoro
@@ -40,6 +42,7 @@ ART_STYLE = ("still from a 2D animated short film, hand-painted storybook illust
              "palette, soft cinematic light, no text, no letters")
 KOKORO_PY = HERE / ".venv-kokoro" / "Scripts" / "python.exe"
 KOKORO_VOICE, KOKORO_SPEED = "am_michael", "1.2"  # male; af_heart is the best-rated (female)
+MOCKINGBIRD = Path.home() / ".mockingbird" / "bin" / "mockingbird.cmd"
 MUSIC = HERE / "music"  # drop royalty-free tracks here (Pixabay Music, YouTube Audio Library); empty = synth drone
 
 
@@ -84,6 +87,9 @@ class Scene(BaseModel):
 
 class Film(BaseModel):
     topic: str      # "<book> by <author>", for the history list
+    title: str
+    author: str
+    year: str       # first published
     scenes: list[Scene]
     caption: str
 
@@ -123,7 +129,7 @@ The script is 140-190 words (about 70 seconds spoken) and tells a story; it is n
 Write for the ear: varied sentence lengths, concrete images, plain words. Every fact must be accurate: no invented
 quotes, dates or numbers; if unsure, leave it out.
 
-- topic: "<title> by <author>".
+- topic: "<title> by <author>". title, author, and year: the year it was first published.
 - scenes: 8 to 11 in order, together forming the script. narration is 1-2 of its sentences. art describes the one
   illustration on screen meanwhile, under 30 words: who, where, doing what, framed like a film shot. Describe each
   recurring character the same way every time (e.g. "a tall thin old knight in dented armour with a grey beard").
@@ -379,16 +385,32 @@ KOKORO_SCRIPT = """
 import json, sys, numpy as np, soundfile as sf
 from kokoro import KPipeline
 pipe = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
+out = []
 for text, path in json.load(sys.stdin):
-    sf.write(path, np.concatenate([r.audio.numpy() for r in pipe(text, voice=sys.argv[1], speed=float(sys.argv[2]))]), 24000)
+    audio, words, t, glue = [], [], 0.0, False
+    for r in pipe(text, voice=sys.argv[1], speed=float(sys.argv[2])):
+        for tk in r.tokens:
+            if tk.start_ts is None:
+                continue
+            if glue and words:  # no space before it: punctuation or a suffix, part of the last word
+                words[-1][1], words[-1][2] = t + tk.end_ts, words[-1][2] + tk.text
+            else:
+                words.append([t + tk.start_ts, t + tk.end_ts, tk.text])
+            glue = not tk.whitespace
+        audio.append(r.audio.numpy())
+        t += len(audio[-1]) / 24000
+    sf.write(path, np.concatenate(audio), 24000)
+    out.append(words)
+print(json.dumps(out))
 """
 
 
 def kokoro(items):
-    """Narrate with Kokoro in its own Python (it doesn't install on 3.14). One process for all slides, so the model
-    loads once. Gives no word timings, so no highlighter."""
-    subprocess.run([KOKORO_PY, "-c", KOKORO_SCRIPT, KOKORO_VOICE, KOKORO_SPEED], check=True, text=True,
-                   input=json.dumps([[t, str(p)] for t, p in items]))
+    """Narrate with Kokoro in its own Python (it doesn't install on 3.14). One process for all scenes, so the model
+    loads once. Returns each item's words as (start, end, word), like speak()."""
+    r = subprocess.run([KOKORO_PY, "-c", KOKORO_SCRIPT, KOKORO_VOICE, KOKORO_SPEED], check=True, text=True,
+                       capture_output=True, encoding="utf-8", input=json.dumps([[t, str(p)] for t, p in items]))
+    return json.loads(r.stdout.strip().splitlines()[-1])
 
 
 async def voice(items):
@@ -466,17 +488,36 @@ MOVES = [("1+0.12*on/{n}", "iw/2-iw/zoom/2", "ih/2-ih/zoom/2"),        # push in
          ("1.12", "iw/2-iw/zoom/2", "(ih-ih/zoom)*(1-on/{n})")]         # tilt up
 
 
-def write_captions(scenes, starts, lengths, path: Path):
-    """Burned-in captions, a few words at a time. Kokoro gives no word timings, so each chunk gets a share of its
-    scene's audio in proportion to its length; close enough for short chunks."""
-    events = []
-    for sc, t0, dur in zip(scenes, starts, lengths):
-        chunks = pack(sc.narration.replace("{", "(").replace("}", ")"), lambda c: len(c.split()) <= 6)
-        total = sum(len(c) for c in chunks)
-        for c in chunks:
-            d = dur * len(c) / total
-            events.append(f"Dialogue: 0,{ts(t0)},{ts(t0 + d)},C,,0,0,0,,{c}")
-            t0 += d
+def caption_groups(words):
+    """Three words a caption, breaking early where a sentence or clause ends."""
+    groups, g = [], []
+    for w in words:
+        g.append(w)
+        if len(g) == 3 or (w[2][-1] in ".?!,;:" and w[2] not in ("St.", "Mr.", "Mrs.", "Dr.")):
+            groups.append(g)
+            g = []
+    return groups + [g] if g else groups
+
+
+def srt(words) -> str:
+    """Captions for mockingbird's kit: one cue per spoken word, the group's text with that word *marked*, so the
+    pill can follow the voice."""
+    def stamp(x):
+        return f"{int(x // 3600):02}:{int(x % 3600 // 60):02}:{x % 60:06.3f}".replace(".", ",")
+    cues, groups = [], caption_groups(words)
+    for n, g in enumerate(groups):
+        end = min(groups[n + 1][0][0] if n + 1 < len(groups) else 1e9, g[-1][1] + 0.6)
+        for k, (start, _, _) in enumerate(g):
+            text = " ".join(f"*{w[2]}*" if j == k else w[2] for j, w in enumerate(g))
+            cues.append(f"{len(cues) + 1}\n{stamp(start)} --> {stamp(g[k + 1][0] if k + 1 < len(g) else end)}\n{text}\n")
+    return "\n".join(cues)
+
+
+def write_captions(words, path: Path):
+    """Plain burned-in captions, three words at a time: the fallback when mockingbird isn't installed."""
+    groups = caption_groups(words)
+    events = [f"Dialogue: 0,{ts(g[0][0])},{ts(groups[n + 1][0][0] if n + 1 < len(groups) else g[-1][1] + 0.4)},C,,0,0,0,,"
+              + " ".join(w[2] for w in g).replace("{", "(").replace("}", ")") for n, g in enumerate(groups)]
     path.write_text(f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
@@ -485,16 +526,49 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: C,Segoe UI,68,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,{PAD},{PAD},620,1
+Style: C,Segoe UI,72,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,{PAD},{PAD},620,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """ + "\n".join(events) + "\n", encoding="utf-8")
 
 
+def mockingbird(tool: str, args: dict) -> str:
+    """Call one mockingbird tool over MCP (JSON-RPC on stdio): `motion` has no command-line form."""
+    p = subprocess.Popen([MOCKINGBIRD, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                         encoding="utf-8")
+    def send(msg):
+        p.stdin.write(json.dumps({"jsonrpc": "2.0", **msg}) + "\n")
+        p.stdin.flush()
+    def reply(i):
+        for line in p.stdout:
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if msg.get("id") == i:
+                return msg
+        raise RuntimeError("mockingbird exited without answering")
+    try:
+        send({"id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                                                          "clientInfo": {"name": "reelbot", "version": "1"}}})
+        reply(1)
+        send({"method": "notifications/initialized"})
+        send({"id": 2, "method": "tools/call", "params": {"name": tool, "arguments": args}})
+        r = reply(2)
+    finally:
+        p.stdin.close()
+        p.terminate()
+    text = " ".join(c.get("text", "") for c in r.get("result", {}).get("content", []))
+    if "error" in r or r["result"].get("isError"):
+        raise RuntimeError(f"mockingbird {tool} failed: {r.get('error') or text}")
+    return text
+
+
 def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
-    """Animated story: one illustration per scene with a slow camera move, crossfades between shots, captions,
-    the narration, then a music bed. A painting that fails reuses the one before it (with a different move)."""
+    """Animated story: one illustration per scene with a slow camera move, crossfades between shots, the narration
+    and a music bed, then mockingbird's motion layer (or plain burned captions without it). A painting that fails
+    reuses the one before it (with a different move)."""
     out = out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     seed = random.randrange(10**6)
@@ -505,11 +579,13 @@ def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
         ImageOps.fit(shot, (W, H)).save(out / f"{i}.png")
     ext = "wav" if KOKORO_PY.exists() else "mp3"
     items = [(sc.narration, out / f"{i}.{ext}") for i, sc in enumerate(film.scenes)]
-    kokoro(items) if ext == "wav" else asyncio.run(voice(items))
-    spoken = [duration(p) for _, p in items]
-    lengths = [d + pause for d in spoken]
+    timings = kokoro(items) if ext == "wav" else asyncio.run(voice(items))
+    lengths = [duration(p) + pause for _, p in items]
     starts = [sum(lengths[:i]) for i in range(len(lengths))]
-    write_captions(film.scenes, starts, spoken, out / "captions.ass")
+    words = [(t0 + a, t0 + b, w) for t0, spoken in zip(starts, timings) for a, b, w in spoken]
+    animate = MOCKINGBIRD.exists()
+    if not animate:
+        write_captions(words, out / "captions.ass")
 
     n_sc, graph = len(film.scenes), []
     for i in range(n_sc):  # each shot runs `fade` longer so the next one can dissolve in over its tail
@@ -521,14 +597,21 @@ def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
     for i in range(1, n_sc):
         graph.append(f"[{last}][v{i}]xfade=transition=fade:duration={fade}:offset={starts[i]:.3f}[x{i}]")
         last = f"x{i}"
-    graph.append(f"[{last}]ass=captions.ass[v]")
+    graph.append(f"[{last}]{'null' if animate else 'ass=captions.ass'}[v]")
     graph += [f"[{n_sc + i}:a]apad=whole_dur={lengths[i]:.3f}[a{i}]" for i in range(n_sc)]
     graph.append("".join(f"[a{i}]" for i in range(n_sc)) + f"concat=n={n_sc}:v=0:a=1,{VOICE_FX},aresample=48000[a]")
-    video = out / "reel.mp4"
+    video = out / ("base.mp4" if animate else "reel.mp4")
     run(*[a for i in range(n_sc) for a in ("-i", out / f"{i}.png")], *[a for _, p in items for a in ("-i", p)],
         "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast",
         "-crf", "20", "-c:a", "aac", "-movflags", "+faststart", video, cwd=out)
     add_music(video)
+    if animate:  # title, captions that follow the voice, mist and light, drawn over the shots
+        config = {"title": film.title, "sub": f"{film.author} · {film.year}", "shots": [round(x, 2) for x in starts[1:]]}
+        (out / "motion.html").write_text((HERE / "book_motion.html").read_text(encoding="utf-8").replace(
+            "/*CONFIG*/{", f"{json.dumps(config, ensure_ascii=False)} || {{", 1), encoding="utf-8")
+        video = out / "reel.mp4"
+        mockingbird("motion", {"script": str(out / "motion.html"), "path": str(out / "base.mp4"), "fps": 30,
+                               "captions": srt(words), "out": str(video)})
     (out / "caption.txt").write_text(film.caption, encoding="utf-8")
     return video
 
