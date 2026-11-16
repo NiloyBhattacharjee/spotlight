@@ -60,15 +60,6 @@ STYLES = {
                             "shapes, limited muted palette, soft gradients, subtle paper grain, minimal detail, "
                             "characters with simple faces",
                         fps=30, zoom=0.06, shake=0, cut="fade", glow=False),
-    "textured vector": dict(art="flat vector illustration with risograph grain texture, two or three bold colours, "
-                                "simple geometric shapes, strong silhouettes, editorial animation style",
-                            fps=30, zoom=0.07, shake=0, cut="smoothleft", glow=False),
-    "watercolour": dict(art="simple loose watercolour illustration, soft transparent washes, white paper showing "
-                            "through, fine ink outlines, gentle colours, minimal detail",
-                        fps=30, zoom=0.07, shake=0, cut="dissolve", glow=False),
-    "anime painting": dict(art="contemporary anime film background painting, painterly soft light, rich atmosphere, "
-                               "clean cel-shaded characters",
-                           fps=30, zoom=0.1, shake=0, cut="fade", glow=True),
 }
 AIRS = ("mist", "snow", "rain", "embers", "dust", "none")  # drawn over every shot by book_motion.html
 # how the narrator sounds, per story. Chatterbox: exaggeration is emotional intensity (higher = more rise and fall),
@@ -194,8 +185,7 @@ not a documentary narrator and not an essay:
 Every fact must be accurate: no invented quotes, dates or numbers; if unsure, leave it out.
 
 - topic: "<title> by <author>". title, author, and year: the year it was first published.
-- style: the animation look for this reel, one of: {", ".join(STYLES)}. Fit the book's mood, and don't reuse a
-  style from the last few reels ({", ".join(recent_styles) or "none yet"}).
+- style: {" or ".join(STYLES) if len(STYLES) == 1 else f"one of: {', '.join(STYLES)}. Fit the book's mood, and don't reuse a style from the last few reels ({', '.join(recent_styles) or 'none yet'})"}.
 - mood: how the narrator should sound for this story: somber (loss, death, regret), eerie (horror, the uncanny),
   tense (crime, danger), tender (love, longing) or wry (satire, comedy, irony).
 - air: what drifts over every shot, from the book's setting: mist, snow, rain, embers (fire, candles, war),
