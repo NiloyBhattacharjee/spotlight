@@ -1,19 +1,42 @@
-"""Daily reels -> AI voice -> Instagram. Two modes: trivia infographics, or narrated Reddit stories.
+"""Daily reels -> AI voice -> Instagram, Facebook, YouTube and TikTok. Modes: trivia infographics, narrated Reddit stories, or animated stories of classic books.
 
 Claude runs through the Claude Code CLI (`claude -p`, your Claude login), so no API key is needed.
-Env (only for posting): IG_USER_ID, IG_TOKEN
+Posting goes to every platform that is set up (env vars; one failing doesn't stop the others):
+  Instagram  IG_USER_ID, IG_TOKEN (instagram_basic, instagram_content_publish, instagram_manage_insights)
+  Facebook   FB_PAGE_ID, FB_PAGE_TOKEN (pages_show_list, pages_read_engagement, pages_manage_posts)
+             With a Meta system user token: python reelbot.py --meta  prints all four for each of your Pages
+  YouTube    YT_CLIENT_ID, YT_CLIENT_SECRET (a Desktop OAuth client), then once: python reelbot.py --login youtube
+  TikTok     TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_REDIRECT_URI, then once: python reelbot.py --login tiktok
+             TIKTOK_PRIVACY defaults to SELF_ONLY: TikTok allows only private posts until the app passes its audit
+  Two pages, one niche each: put a page's settings in an env file (copy page.env.example) and pass --env books.env.
+  Its platform settings replace the environment's, so a reel never lands on the other page; its YouTube/TikTok
+  sign-ins go to books.tokens.json. schedule.ps1 runs each page on its own daily times.
+  Feedback loop: every posted reel is logged (books.posts.json); each run pulls Instagram's views, average watch
+  time and shares for reels 1-30 days old and tells Claude what did best and worst before it picks the next one.
   python reelbot.py              trivia infographic reel, posted
   python reelbot.py --reddit     drama/revenge Reddit story reel (r/AmItheAsshole, r/pettyrevenge, ...), posted
+  python reelbot.py --book       animated story of a public-domain classic, told TED-Ed style, posted
+  python reelbot.py --book "White Nights"   the same, for a book you choose
+  --book draws its motion layer (book_motion.html: title, captions, mist, light) with mockingbird when installed,
+  else burns plain captions in.
   add --dry-run to build without posting
+  --book narrates with Chatterbox (open-source, local, ~6x slower than real time on CPU) once set up with
+  mockingbird for its word timings, else Kokoro, else Edge. Both need Python 3.10-3.12:
+    py -3.11 -m venv .venv-chatterbox
+    .venv-chatterbox/Scripts/pip install chatterbox-tts
+    py -3.11 -m venv .venv-kokoro
+    .venv-kokoro/Scripts/pip install kokoro soundfile en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
   python reelbot.py --demo       render a built-in trivia sample (no API calls) to test the pipeline
 """
-import asyncio, html, json, os, random, re, shutil, subprocess, sys, time
+import asyncio, base64, difflib, html, io, json, os, random, re, shutil, subprocess, sys, time
+import urllib.parse
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import edge_tts, requests
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from pydantic import BaseModel
+from typing import Literal
 
 HERE = Path(__file__).parent
 VOICE = "en-US-AndrewMultilingualNeural"  # newer, more human voices: Andrew/Ava/Emma/BrianMultilingualNeural
@@ -29,6 +52,40 @@ SUBS = ["AmItheAsshole", "AITAH", "pettyrevenge", "ProRevenge", "MaliciousCompli
         "TrueOffMyChest"]
 MIN_WORDS, MAX_WORDS = 60, 1500  # source post length; Claude retells it in 150-300 words (about 60-110 s)
 TOP_WINDOW = "all"  # most upvoted of: hour, day, week, month, year, all
+# book reels: each one picks an animation style. art is the look of every illustration; fps is the camera's frame
+# rate (12 stutters like stop-motion); zoom how far each move travels; shake a hand-moved jitter in pixels; cut the
+# ffmpeg xfade between shots; glow a soft light at the top of the frame.
+STYLES = {
+    "3d animated film": dict(art="still frame from a 3D animated feature film, stylised expressive characters, soft "
+                                 "global illumination, rich colour, cinematic depth of field",
+                             fps=30, zoom=0.14, shake=0, cut="fade", glow=True),
+    "claymation": dict(art="claymation stop-motion film still, handmade plasticine characters with visible "
+                           "fingerprints, miniature handcrafted sets, soft studio lighting",
+                       fps=12, zoom=0.08, shake=3, cut="fadeblack", glow=False),
+    "anime": dict(art="hand-drawn anime feature film still, clean cel shading, lush painted backgrounds, dramatic light",
+                  fps=30, zoom=0.16, shake=0, cut="smoothleft", glow=True),
+    "paper cut-out": dict(art="layered paper cut-out animation still, textured construction paper, shadow-box depth, "
+                              "handcrafted miniature stage",
+                          fps=12, zoom=0.07, shake=2, cut="wipeleft", glow=False),
+    "ink wash": dict(art="ink wash animation still, flowing black ink and soft watercolour washes on textured paper, "
+                         "sparse colour",
+                     fps=30, zoom=0.10, shake=0, cut="dissolve", glow=False),
+    "noir graphic novel": dict(art="noir graphic novel panel, bold black inks, deep shadows, limited palette with one "
+                                   "red accent, halftone texture",
+                               fps=30, zoom=0.12, shake=0, cut="fadeblack", glow=False),
+    "storybook painting": dict(art="still from a 2D animated short film, hand-painted storybook illustration, textured "
+                                   "brushwork, muted warm palette, soft cinematic light",
+                               fps=30, zoom=0.12, shake=0, cut="fade", glow=True),
+    "candlelit oil painting": dict(art="classical oil painting brought to life, rich chiaroscuro, candlelight, visible "
+                                       "brushwork",
+                                   fps=30, zoom=0.10, shake=0, cut="dissolve", glow=False),
+}
+AIRS = ("mist", "snow", "rain", "embers", "dust", "none")  # drawn over every shot by book_motion.html
+KOKORO_PY = HERE / ".venv-kokoro" / "Scripts" / "python.exe"
+KOKORO_VOICE, KOKORO_SPEED = "am_michael", "1.2"  # male; af_heart is the best-rated (female)
+CHATTERBOX_PY = HERE / ".venv-chatterbox" / "Scripts" / "python.exe"
+MOCKINGBIRD = Path.home() / ".mockingbird" / "bin" / "mockingbird.cmd"
+MUSIC = HERE / "music"  # drop royalty-free tracks here (Pixabay Music, YouTube Audio Library); empty = synth drone
 
 
 # ---------- Claude ----------
@@ -65,6 +122,23 @@ class Post(BaseModel):
     caption: str
 
 
+class Scene(BaseModel):
+    narration: str  # 1-2 sentences of the script
+    art: str        # the illustration on screen while it is spoken
+
+
+class Film(BaseModel):
+    topic: str      # "<book> by <author>", for the history list
+    style: Literal[tuple(STYLES)]
+    air: Literal[AIRS]
+    hook: str       # on-screen text over the opening seconds
+    title: str
+    author: str
+    year: str       # first published
+    scenes: list[Scene]
+    caption: str
+
+
 class Story(BaseModel):
     id: str         # chosen post id, or "" if none are suitable
     title: str
@@ -82,6 +156,102 @@ Pick ONE specific, surprising topic. Do not repeat any of these past topics: {hi
   "text" is one sentence under 18 words, "narration" is 1-2 conversational spoken sentences.
 - Use only well-established, verifiable facts. If a figure is an estimate, say "about".
 - caption: a hook line, one line of context, then 6-8 relevant hashtags.""", Post)
+
+
+def generate_film(history: list[str], book: str | None = None, feedback: str = "", recent_styles=()) -> Film:
+    pick = f"The book is {book}." if book else (
+        "Pick ONE classic book published before 1929 that people have heard of but not read, with a story that makes "
+        "people stop scrolling: obsession, betrayal, crime, madness, survival, forbidden love, or an author whose "
+        "own life was as wild as the book.")
+    return ask(f"""You write narration for short animated Instagram Reels that make people fall for classic books, the
+way a great storyteller would tell one to a friend. {pick} Do not repeat any of these past topics:
+{history[-60:] or "none yet"}.
+
+The script is 110-150 words (45-60 seconds spoken; shorter reels get watched to the end, which is what spreads
+them) and tells a story; it is not a summary or a list of lessons:
+- The first sentence must stop a scroll within two seconds: open cold inside the book's most shocking or vivid
+  moment, in the present tense, as if it is happening now, like "Mounting his skinny steed, the protagonist of
+  Don Quixote charges an army of giants." No greeting, no "in this video", no slow scene-setting.
+- Then pull back, as a twist rather than a resume: how this book came to exist, the author's surprising life or
+  times. Name the book and author naturally mid-story, never as "This is X by Y".
+- What made it daring in its day, and its heart: the characters, shown through concrete moments, not morals.
+- End on a line that lingers: something true about people, said simply, maybe turned back on the viewer. No
+  call to action, no lecture.
+
+The voice is everything. Write like someone leaning in to tell a friend a story they can't stop thinking about,
+not a documentary narrator and not an essay:
+- Warm, a little conspiratorial, wry where the story allows. Contractions (he's, didn't, she'd).
+- Rhythm: a long rolling sentence, then a short punch. Fragments are fine. So is starting with "And" or "But".
+- Once or twice, talk to the viewer directly or ask the question they're already asking ("You'd think he'd run.
+  He doesn't.", "Would you have waited?").
+- Senses over adjectives: the cold of the railing, the smell of the river, the sound of the drum before the volley.
+- Dashes and "..." where a speaker would pause for effect, sparingly; the narrator voice reads them as pauses.
+- None of the words that make writing sound machine-made: tapestry, delve, testament, timeless, profound, journey,
+  resonate, masterpiece, poignant, "a reminder that", "in a world where", "little did he know".
+- Read every line aloud in your head; if it sounds written rather than spoken, rewrite it.
+Every fact must be accurate: no invented quotes, dates or numbers; if unsure, leave it out.
+
+- topic: "<title> by <author>". title, author, and year: the year it was first published.
+- style: the animation look for this reel, one of: {", ".join(STYLES)}. Fit the book's mood, and don't reuse a
+  style from the last few reels ({", ".join(recent_styles) or "none yet"}).
+- air: what drifts over every shot, from the book's setting: mist, snow, rain, embers (fire, candles, war),
+  dust (sunlit rooms, deserts) or none.
+- hook: on-screen text for the first three seconds, at most 7 words, that makes people need the rest without
+  giving away the ending ("He fell in love in four nights.", "She married the man who ruined her."). True to the book.
+- scenes: 8 to 11 in order, together forming the script. narration is 1-2 of its sentences. art describes the one
+  illustration on screen meanwhile, under 30 words: who, where, doing what, framed like a film shot. Describe each
+  recurring character the same way every time (e.g. "a tall thin old knight in dented armour with a grey beard").
+- caption: line 1 a hook under 10 words, line 2 the title and author, then 6-8 relevant hashtags.
+{feedback}""", Film)
+
+
+def paint(scene: str, seed: int, style: str = STYLES["storybook painting"]["art"]):
+    """One illustration, from Cloudflare when it's set up (CF_ACCOUNT_ID, CF_API_TOKEN), else Pollinations.
+    One seed per reel keeps the look consistent. Returns None on failure: the scene reuses the painting before it."""
+    prompt = f"{scene}, {style}, period-accurate setting with no modern objects, no text, no letters"
+    if os.environ.get("CF_ACCOUNT_ID") and os.environ.get("CF_API_TOKEN"):
+        return cloudflare_art(prompt, seed)
+    return pollinations_art(prompt, seed)
+
+
+def cloudflare_art(prompt: str, seed: int):
+    """Flux 2 Klein on Cloudflare Workers AI: no logo and no wait. A portrait image costs about 250 of the 10,000
+    neurons Cloudflare gives free each day, so two book reels a day stay free."""
+    url = (f"https://api.cloudflare.com/client/v4/accounts/{os.environ['CF_ACCOUNT_ID']}"
+           "/ai/run/@cf/black-forest-labs/flux-2-klein-4b")
+    form = {"prompt": prompt, "width": "1088", "height": "1920", "seed": str(seed)}
+    for _ in range(3):
+        try:
+            r = requests.post(url, headers={"Authorization": f"Bearer {os.environ['CF_API_TOKEN']}"}, timeout=180,
+                              files={k: (None, v) for k, v in form.items()})  # multipart form, as the model expects
+            if r.status_code == 429 or r.status_code >= 500:  # busy: try again shortly
+                time.sleep(10)
+                continue
+            fb(r)
+            return Image.open(io.BytesIO(base64.b64decode(r.json()["result"]["image"]))).convert("RGB")
+        except (requests.RequestException, RuntimeError, KeyError, ValueError, OSError) as e:
+            print(f"no art for {prompt[:60]!r}: {e}")
+            return None
+    print(f"no art for {prompt[:60]!r}: Cloudflare still busy after retries")
+    return None
+
+
+def pollinations_art(scene: str, seed: int):  # scene: the whole prompt
+    """AI art from Pollinations (free, no key; anonymous images carry a small logo)."""
+    for _ in range(4):
+        try:
+            r = requests.get("https://image.pollinations.ai/prompt/" + urllib.parse.quote(scene, safe=""),
+                             params={"width": W, "height": H, "seed": seed, "nologo": "true"}, timeout=180)
+            if r.status_code in (402, 429) or r.status_code >= 500:  # anonymous limit (1 image / 45 s, sent as 402) or overload
+                time.sleep(46)  # ponytail: minutes of waiting per reel; a pollen key from enter.pollinations.ai lifts it
+                continue
+            r.raise_for_status()
+            return Image.open(io.BytesIO(r.content)).convert("RGB")
+        except (requests.RequestException, OSError) as e:
+            print(f"no art for {scene!r}: {e}")
+            return None
+    print(f"no art for {scene!r}: still {r.status_code} after retries")
+    return None
 
 
 # ---------- Reddit ----------
@@ -108,7 +278,7 @@ def fetch_reddit(sub: str) -> list[dict]:
     return posts
 
 
-def pick_story(sub: str, posts: list[dict], seen: list[str]):
+def pick_story(sub: str, posts: list[dict], seen: list[str], feedback: str = ""):
     # feed is already sorted by upvotes; keep that order and send the top 30 unused ones
     cands = [p for p in posts if p["id"] not in seen and MIN_WORDS <= len(p["body"].split()) <= MAX_WORDS][:30]
     if not cands:
@@ -132,6 +302,8 @@ Prepare the chosen post for a text-to-speech narrator:
 - caption: line 1 a hook of at most 8 words that makes people watch, like "She did not see this coming." (true to
   the story, does not give away the ending); line 2 a short question that gets viewers to take a side in the comments;
   line 3 "Based on a story by u/<author> on r/{sub}"; then 6-8 relevant hashtags.
+
+{feedback}
 
 Posts: {json.dumps(cands)}""", Story)
     post = next((p for p in cands if p["id"] == s.id), None)
@@ -235,8 +407,8 @@ def pages(text, max_lines=12):
     return pack(text, lambda t: len(wrap(d, t, BODY, CARD_W)) <= max_lines)
 
 
-def trivia_slides(post: Post):
-    cards = [("DID YOU KNOW?", post.title, "", post.hook)]
+def trivia_slides(post: Post, label="DID YOU KNOW?"):
+    cards = [(label, post.title, "", post.hook)]
     cards += [(f"{i}/{len(post.slides)}", s.big, s.text, s.narration) for i, s in enumerate(post.slides, 1)]
     return [(render(*c[:3], i, len(cards)), c[3], False) for i, c in enumerate(cards)]
 
@@ -264,10 +436,12 @@ def match_words(spoken, boxes):
     return hits
 
 
+def ts(s):
+    return f"{int(s // 3600)}:{int(s % 3600 // 60):02}:{s % 60:05.2f}"
+
+
 def write_ass(spoken, boxes, path: Path):
     """Highlighter: a translucent gold box over each word on the card while it is spoken."""
-    def ts(s):
-        return f"{int(s // 3600)}:{int(s % 3600 // 60):02}:{s % 60:05.2f}"
     hits, events = match_words(spoken, boxes), []
     for n, (start, end, (x, y, w, h, _)) in enumerate(hits):
         stop = hits[n + 1][0] if n + 1 < len(hits) else end + 0.3  # hold until the next word starts
@@ -292,14 +466,96 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 async def speak(text, mp3):
     """Save the narration and return each word's (start, end, word) in seconds."""
-    words = []
-    with open(mp3, "wb") as f:
-        async for c in edge_tts.Communicate(text, VOICE, rate=RATE, boundary="WordBoundary").stream():
-            if c["type"] == "audio":
-                f.write(c["data"])
-            elif c["type"] == "WordBoundary":
-                words.append((c["offset"] / 1e7, (c["offset"] + c["duration"]) / 1e7, c["text"]))
-    return words
+    for attempt in range(3):  # Edge's free endpoint now and then sends no audio; a retry a few seconds later works
+        words = []
+        try:
+            with open(mp3, "wb") as f:
+                async for c in edge_tts.Communicate(text, VOICE, rate=RATE, boundary="WordBoundary").stream():
+                    if c["type"] == "audio":
+                        f.write(c["data"])
+                    elif c["type"] == "WordBoundary":
+                        words.append((c["offset"] / 1e7, (c["offset"] + c["duration"]) / 1e7, c["text"]))
+            return words
+        except edge_tts.exceptions.NoAudioReceived:
+            if attempt == 2:
+                raise
+            await asyncio.sleep(5)
+
+
+KOKORO_SCRIPT = """
+import json, sys, numpy as np, soundfile as sf
+from kokoro import KPipeline
+pipe = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
+out = []
+for text, path in json.load(sys.stdin):
+    audio, words, t, glue = [], [], 0.0, False
+    for r in pipe(text, voice=sys.argv[1], speed=float(sys.argv[2])):
+        for tk in r.tokens:
+            if tk.start_ts is None:
+                continue
+            if glue and words:  # no space before it: punctuation or a suffix, part of the last word
+                words[-1][1], words[-1][2] = t + tk.end_ts, words[-1][2] + tk.text
+            else:
+                words.append([t + tk.start_ts, t + tk.end_ts, tk.text])
+            glue = not tk.whitespace
+        audio.append(r.audio.numpy())
+        t += len(audio[-1]) / 24000
+    sf.write(path, np.concatenate(audio), 24000)
+    out.append(words)
+print(json.dumps(out))
+"""
+
+
+def kokoro(items):
+    """Narrate with Kokoro in its own Python (it doesn't install on 3.14). One process for all scenes, so the model
+    loads once. Returns each item's words as (start, end, word), like speak()."""
+    r = subprocess.run([KOKORO_PY, "-c", KOKORO_SCRIPT, KOKORO_VOICE, KOKORO_SPEED], check=True, text=True,
+                       capture_output=True, encoding="utf-8", input=json.dumps([[t, str(p)] for t, p in items]))
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+CHATTERBOX_SCRIPT = """
+import json, sys, torch, torchaudio
+from chatterbox.tts import ChatterboxTTS
+torch.set_num_threads(max(1, (__import__("os").cpu_count() or 2) // 2))  # physical cores
+model = ChatterboxTTS.from_pretrained(device="cpu")
+for text, path in json.load(sys.stdin):
+    torchaudio.save(path, model.generate(text, exaggeration=0.4, cfg_weight=0.5), model.sr)  # a calm narrator
+"""
+
+
+def chatterbox(items):
+    """Narrate with Chatterbox in its own Python, one process so the model loads once. It gives no word timings,
+    so each scene is transcribed with mockingbird and the heard words are matched back to the script."""
+    r = subprocess.run([CHATTERBOX_PY, "-c", CHATTERBOX_SCRIPT], capture_output=True, text=True, encoding="utf-8",
+                       input=json.dumps([[t, str(p)] for t, p in items]))
+    if r.returncode:
+        raise RuntimeError(f"chatterbox failed: {r.stderr[-2000:]}")
+    return [align(text, heard(path)) for text, path in items]
+
+
+def heard(path) -> list:
+    """Each word mockingbird hears in the file, as (start, end, word)."""
+    out = subprocess.run([MOCKINGBIRD, "transcribe", str(path), "--words"], capture_output=True, text=True,
+                         encoding="utf-8", check=True).stdout
+    return [(int(a) * 60 + float(b), int(c) * 60 + float(d), w)
+            for a, b, c, d, w in re.findall(r"\[(\d+):([\d.]+)-(\d+):([\d.]+)\]\s+(\S+)", out)]
+
+
+def align(text: str, spoken: list) -> list:
+    """The script's own words with the times they were heard at, so captions never show a transcription slip.
+    Misheard or unheard words share out the time of the stretch they fall in."""
+    words, norm = text.split(), lambda w: re.sub(r"\W", "", w.lower())
+    out = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, [norm(w) for w in words], [norm(h[2]) for h in spoken],
+                                                       autojunk=False).get_opcodes():
+        if tag == "equal":
+            out += [(spoken[j][0], spoken[j][1], words[i]) for i, j in zip(range(i1, i2), range(j1, j2))]
+        elif i2 > i1:
+            a = spoken[j1][0] if j2 > j1 else (out[-1][1] if out else 0.0)
+            step = ((spoken[j2 - 1][1] if j2 > j1 else a) - a) / (i2 - i1)
+            out += [(a + k * step, a + (k + 1) * step, words[i1 + k]) for k in range(i2 - i1)]
+    return out
 
 
 async def voice(items):
@@ -313,6 +569,31 @@ def run(*args, cwd=None):
 def duration(path) -> float:
     return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
                                  str(path)], capture_output=True, text=True, check=True).stdout)
+
+
+def drone(d: float) -> str:
+    """A slow ambient pad, synthesized: a minor chord (root, fifth, minor third an octave up), each note beside a
+    slightly detuned twin so it shimmers, swelling gently, then echoed into a wash. No samples, so no licence."""
+    root = random.choice([98.0, 110.0, 123.47, 130.81])  # G2, A2, B2, C3: a different key each reel
+    def channel(det):
+        notes = "+".join(f"{a}*(sin(2*PI*{f:.2f}*t)+sin(2*PI*{f + det:.2f}*t))"
+                         for f, a in ((root, .2), (root * 1.5, .12), (root * 2.378, .06)))
+        return f"({notes})*(0.75+0.25*sin(2*PI*0.04*t))"
+    return (f"aevalsrc={channel(0.3)}|{channel(0.45)}:s=48000:d={d:.2f},"
+            "lowpass=f=1200,aecho=0.8:0.7:600|1100:0.3|0.2")
+
+
+def add_music(video: Path):
+    """Quiet bed under the narration: a random track from music/ (looped), else the synth drone."""
+    d = duration(video)
+    tracks = [p for p in MUSIC.glob("*") if p.suffix.lower() in (".mp3", ".wav", ".ogg", ".m4a", ".flac")]
+    src = ["-stream_loop", "-1", "-i", random.choice(tracks)] if tracks else ["-f", "lavfi", "-i", drone(d)]
+    voice_only = video.with_name("voice_only.mp4")
+    video.replace(voice_only)
+    run("-i", voice_only, *src, "-filter_complex",
+        f"[1:a]atrim=0:{d:.2f},loudnorm=I=-32:TP=-8,afade=t=in:d=2,afade=t=out:st={max(d - 3, 0):.2f}:d=3[m];"
+        "[0:a][m]amix=inputs=2:duration=first:normalize=0,aresample=48000[a]",
+        "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", video)
 
 
 def build(slides, caption: str, out: Path, pause=0.6, bg: Path | None = None) -> Path:
@@ -345,15 +626,185 @@ def build(slides, caption: str, out: Path, pause=0.6, bg: Path | None = None) ->
     return video
 
 
-# ---------- Instagram ----------
+# camera moves on a still (zoompan expressions; n = frames in the shot), cycled so consecutive shots differ
+MOVES = [("1+{a}*on/{n}", "iw/2-iw/zoom/2", "ih/2-ih/zoom/2"),          # push in   (a = the style's zoom)
+         ("1+{a}-{a}*on/{n}", "iw/2-iw/zoom/2", "ih/2-ih/zoom/2"),     # pull out
+         ("1+{a}", "(iw-iw/zoom)*on/{n}", "ih/2-ih/zoom/2"),            # pan right
+         ("1+{a}", "iw/2-iw/zoom/2", "(ih-ih/zoom)*(1-on/{n})")]        # tilt up
+
+
+def caption_groups(words):
+    """Three words a caption, breaking early where a sentence or clause ends."""
+    groups, g = [], []
+    for w in words:
+        g.append(w)
+        if len(g) == 3 or (w[2][-1] in ".?!,;:" and w[2] not in ("St.", "Mr.", "Mrs.", "Dr.")):
+            groups.append(g)
+            g = []
+    return groups + [g] if g else groups
+
+
+def srt(words) -> str:
+    """Captions for mockingbird's kit: one cue per spoken word, the group's text with that word *marked*, so the
+    pill can follow the voice."""
+    def stamp(x):
+        return f"{int(x // 3600):02}:{int(x % 3600 // 60):02}:{x % 60:06.3f}".replace(".", ",")
+    cues, groups = [], caption_groups(words)
+    for n, g in enumerate(groups):
+        end = min(groups[n + 1][0][0] if n + 1 < len(groups) else 1e9, g[-1][1] + 0.6)
+        for k, (start, _, _) in enumerate(g):
+            text = " ".join(f"*{w[2]}*" if j == k else w[2] for j, w in enumerate(g))
+            cues.append(f"{len(cues) + 1}\n{stamp(start)} --> {stamp(g[k + 1][0] if k + 1 < len(g) else end)}\n{text}\n")
+    return "\n".join(cues)
+
+
+def write_captions(words, path: Path):
+    """Plain burned-in captions, three words at a time: the fallback when mockingbird isn't installed."""
+    groups = caption_groups(words)
+    events = [f"Dialogue: 0,{ts(g[0][0])},{ts(groups[n + 1][0][0] if n + 1 < len(groups) else g[-1][1] + 0.4)},C,,0,0,0,,"
+              + " ".join(w[2] for w in g).replace("{", "(").replace("}", ")") for n, g in enumerate(groups)]
+    path.write_text(f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {W}
+PlayResY: {H}
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: C,Segoe UI,72,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,{PAD},{PAD},620,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+""" + "\n".join(events) + "\n", encoding="utf-8")
+
+
+def mockingbird(tool: str, args: dict) -> str:
+    """Call one mockingbird tool over MCP (JSON-RPC on stdio): `motion` has no command-line form."""
+    p = subprocess.Popen([MOCKINGBIRD, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                         encoding="utf-8")
+    def send(msg):
+        p.stdin.write(json.dumps({"jsonrpc": "2.0", **msg}) + "\n")
+        p.stdin.flush()
+    def reply(i):
+        for line in p.stdout:
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if msg.get("id") == i:
+                return msg
+        raise RuntimeError("mockingbird exited without answering")
+    try:
+        send({"id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                                                          "clientInfo": {"name": "reelbot", "version": "1"}}})
+        reply(1)
+        send({"method": "notifications/initialized"})
+        send({"id": 2, "method": "tools/call", "params": {"name": tool, "arguments": args}})
+        r = reply(2)
+    finally:
+        p.stdin.close()
+        p.terminate()
+    text = " ".join(c.get("text", "") for c in r.get("result", {}).get("content", []))
+    if "error" in r or r["result"].get("isError"):
+        raise RuntimeError(f"mockingbird {tool} failed: {r.get('error') or text}")
+    return text
+
+
+def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
+    """Animated story: one illustration per scene with a slow camera move, crossfades between shots, the narration
+    and a music bed, then mockingbird's motion layer (or plain burned captions without it). A painting that fails
+    reuses the one before it (with a different move)."""
+    out = out.resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "script.json").write_text(film.model_dump_json(indent=1), encoding="utf-8")  # to read what was said
+    seed = random.randrange(10**6)
+    look = STYLES[film.style]
+    arts = [paint(sc.art, seed, look["art"]) for sc in film.scenes]
+    shot = next((a for a in arts if a), None) or Image.new("RGB", (W, H), BG)
+    for i, a in enumerate(arts):
+        shot = a or shot
+        ImageOps.fit(shot, (W, H)).save(out / f"{i}.png")
+    engine = (chatterbox if CHATTERBOX_PY.exists() and MOCKINGBIRD.exists() else kokoro if KOKORO_PY.exists()
+              else lambda items: asyncio.run(voice(items)))
+    items = [(sc.narration, out / f"{i}.{'mp3' if engine.__name__ == '<lambda>' else 'wav'}")
+             for i, sc in enumerate(film.scenes)]
+    timings = engine(items)
+    lengths = [duration(p) + pause for _, p in items]
+    starts = [sum(lengths[:i]) for i in range(len(lengths))]
+    words = [(t0 + a, t0 + b, w) for t0, spoken in zip(starts, timings) for a, b, w in spoken]
+    animate = MOCKINGBIRD.exists()
+    if not animate:
+        write_captions(words, out / "captions.ass")
+
+    n_sc, graph = len(film.scenes), []
+    for i in range(n_sc):  # each shot runs `fade` longer so the next one can dissolve in over its tail
+        n = round((lengths[i] + (fade if i < n_sc - 1 else 0)) * look["fps"])
+        z, x, y = (e.format(n=n, a=look["zoom"]) for e in MOVES[i % len(MOVES)])
+        if look["shake"]:  # a hand-moved camera: a small different nudge every frame
+            x, y = f"{x}+{look['shake']}*sin(on*12.9898)", f"{y}+{look['shake']}*sin(on*78.233)"
+        graph.append(f"[{i}:v]scale={2 * W}:{2 * H},zoompan=z='{z}':x='{x}':y='{y}':d={n}:s={W}x{H}:fps={look['fps']},"
+                     f"fps=30,setsar=1,format=yuv420p[v{i}]")  # 2x upscale first: zoompan jitters on a small image
+    last = "v0"
+    for i in range(1, n_sc):
+        graph.append(f"[{last}][v{i}]xfade=transition={look['cut']}:duration={fade}:offset={starts[i]:.3f}[x{i}]")
+        last = f"x{i}"
+    graph.append(f"[{last}]{'null' if animate else 'ass=captions.ass'}[v]")
+    graph += [f"[{n_sc + i}:a]apad=whole_dur={lengths[i]:.3f}[a{i}]" for i in range(n_sc)]
+    graph.append("".join(f"[a{i}]" for i in range(n_sc)) + f"concat=n={n_sc}:v=0:a=1,{VOICE_FX},aresample=48000[a]")
+    video = out / ("base.mp4" if animate else "reel.mp4")
+    run(*[a for i in range(n_sc) for a in ("-i", out / f"{i}.png")], *[a for _, p in items for a in ("-i", p)],
+        "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast",
+        "-crf", "20", "-c:a", "aac", "-movflags", "+faststart", video, cwd=out)
+    add_music(video)
+    if animate:  # title, captions that follow the voice, mist and light, drawn over the shots
+        config = {"title": film.hook, "sub": f"{film.title} · {film.author}, {film.year}",
+                  "shots": [round(x, 2) for x in starts[1:]], "air": film.air, "glow": look["glow"]}
+        (out / "motion.html").write_text((HERE / "book_motion.html").read_text(encoding="utf-8").replace(
+            "/*CONFIG*/{", f"{json.dumps(config, ensure_ascii=False)} || {{", 1), encoding="utf-8")
+        video = out / "reel.mp4"
+        mockingbird("motion", {"script": str(out / "motion.html"), "path": str(out / "base.mp4"), "fps": 30,
+                               "captions": srt(words), "out": str(video)})
+    (out / "caption.txt").write_text(film.caption, encoding="utf-8")
+    return video
+
+
+# ---------- posting ----------
+
+TOKENS = HERE / "tokens.json"  # YouTube and TikTok sign-ins from --login; kept out of git
+POSTS = HERE / "posts.json"    # every reel this page posted and its Instagram numbers, for the feedback loop
+
+
+def use_env(path: Path):
+    """Load one page's settings, replacing every platform setting from the environment so nothing posts to the
+    other page by accident; that page's YouTube/TikTok sign-ins live beside it (books.env -> books.tokens.json)."""
+    global TOKENS, POSTS
+    if not path.exists():
+        sys.exit(f"{path.name} not found: copy page.env.example to it and fill it in")
+    for k in [k for _, env in PLATFORMS.values() for k in env] + ["TIKTOK_REDIRECT_URI", "TIKTOK_PRIVACY"]:
+        os.environ.pop(k, None)
+    for line in path.read_text(encoding="utf-8").splitlines():
+        k, sep, v = line.partition("=")
+        if sep and not k.strip().startswith("#"):
+            os.environ[k.strip()] = v.strip().strip('"')
+    TOKENS = path.with_suffix(".tokens.json")
+    POSTS = path.with_suffix(".posts.json")
+
+
+def tokens() -> dict:
+    return json.loads(TOKENS.read_text()) if TOKENS.exists() else {}
+
+
+def save_token(site: str, refresh: str):
+    TOKENS.write_text(json.dumps({**tokens(), site: refresh}, indent=1))
+
 
 def fb(r):
     if not r.ok:
         raise RuntimeError(f"{r.status_code} {r.text}")
-    return r.json()
+    return r.json() if r.content else {}
 
 
-def upload(video: Path, caption: str) -> str:
+def instagram(video: Path, caption: str) -> str:
     uid, tok = os.environ["IG_USER_ID"], os.environ["IG_TOKEN"]
     base, auth = f"https://graph.facebook.com/{GRAPH}", {"Authorization": f"OAuth {tok}"}
     cid = fb(requests.post(f"{base}/{uid}/media", headers=auth, timeout=60, data={
@@ -373,6 +824,164 @@ def upload(video: Path, caption: str) -> str:
     return fb(requests.post(f"{base}/{uid}/media_publish", headers=auth, data={"creation_id": cid}, timeout=60))["id"]
 
 
+def facebook(video: Path, caption: str) -> str:
+    """A Reel on the Facebook Page: start an upload, send the file, publish it with the caption."""
+    page, tok = os.environ["FB_PAGE_ID"], os.environ["FB_PAGE_TOKEN"]
+    base = f"https://graph.facebook.com/{GRAPH}/{page}/video_reels"
+    vid = fb(requests.post(base, data={"upload_phase": "start", "access_token": tok}, timeout=60))["video_id"]
+    data = video.read_bytes()
+    fb(requests.post(f"https://rupload.facebook.com/video-upload/{GRAPH}/{vid}", data=data, timeout=600,
+                     headers={"Authorization": f"OAuth {tok}", "offset": "0", "file_size": str(len(data))}))
+    fb(requests.post(base, timeout=60, data={"upload_phase": "finish", "video_id": vid, "video_state": "PUBLISHED",
+                                             "description": caption, "access_token": tok}))
+    return vid
+
+
+def youtube(video: Path, caption: str) -> str:
+    """A Short: vertical and under 3 minutes, so YouTube files it as one. The caption's first line is the title."""
+    tok = fb(requests.post("https://oauth2.googleapis.com/token", timeout=30, data={
+        "client_id": os.environ["YT_CLIENT_ID"], "client_secret": os.environ["YT_CLIENT_SECRET"],
+        "refresh_token": tokens()["youtube"], "grant_type": "refresh_token"}))["access_token"]
+    auth = {"Authorization": f"Bearer {tok}"}
+    title = re.sub(r"[<>]", "", caption.splitlines()[0]).strip()[:100] or "New short"
+    r = requests.post("https://www.googleapis.com/upload/youtube/v3/videos", timeout=60,
+                      params={"uploadType": "resumable", "part": "snippet,status"},
+                      headers={**auth, "X-Upload-Content-Type": "video/mp4"},
+                      json={"snippet": {"title": title, "description": caption, "categoryId": "24"},
+                            "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False,
+                                       "containsSyntheticMedia": True}})
+    fb(r)
+    return fb(requests.put(r.headers["Location"], data=video.read_bytes(), timeout=600,
+                           headers={**auth, "Content-Type": "video/mp4"}))["id"]
+
+
+def tiktok(video: Path, caption: str) -> str:
+    """Direct post through TikTok's Content Posting API, labelled as AI-generated."""
+    t = fb(requests.post("https://open.tiktokapis.com/v2/oauth/token/", timeout=30, data={
+        "client_key": os.environ["TIKTOK_CLIENT_KEY"], "client_secret": os.environ["TIKTOK_CLIENT_SECRET"],
+        "grant_type": "refresh_token", "refresh_token": tokens()["tiktok"]}))
+    if "access_token" not in t:
+        raise RuntimeError(f"TikTok sign-in failed: {t}")
+    save_token("tiktok", t["refresh_token"])  # TikTok can hand out a new one each time
+    size = video.stat().st_size  # ponytail: one piece, fine up to TikTok's 64 MB chunk limit; reels are ~30 MB
+    init = fb(requests.post("https://open.tiktokapis.com/v2/post/publish/video/init/", timeout=60,
+                            headers={"Authorization": f"Bearer {t['access_token']}"}, json={
+        "post_info": {"title": caption[:2200], "privacy_level": os.environ.get("TIKTOK_PRIVACY", "SELF_ONLY"),
+                      "is_aigc": True},
+        "source_info": {"source": "FILE_UPLOAD", "video_size": size, "chunk_size": size, "total_chunk_count": 1}}))
+    fb(requests.put(init["data"]["upload_url"], data=video.read_bytes(), timeout=600,
+                    headers={"Content-Type": "video/mp4", "Content-Range": f"bytes 0-{size - 1}/{size}"}))
+    return init["data"]["publish_id"]
+
+
+PLATFORMS = {"instagram": (instagram, ["IG_USER_ID", "IG_TOKEN"]),
+             "facebook": (facebook, ["FB_PAGE_ID", "FB_PAGE_TOKEN"]),
+             "youtube": (youtube, ["YT_CLIENT_ID", "YT_CLIENT_SECRET"]),
+             "tiktok": (tiktok, ["TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET"])}
+
+
+def ready() -> list[str]:
+    """The platforms this page is set up for."""
+    return [name for name, (_, env) in PLATFORMS.items()
+            if all(os.environ.get(k) for k in env) and (name not in ("youtube", "tiktok") or name in tokens())]
+
+
+def publish(video: Path, caption: str) -> dict:
+    """Post to every platform that is set up; one failing doesn't stop the rest. Returns {platform: post id}."""
+    done = {}
+    for name in ready():
+        try:
+            done[name] = PLATFORMS[name][0](video, caption)
+            print(f"posted to {name}:", done[name])
+        except Exception as e:  # report it and carry on with the other platforms
+            print(f"{name} failed: {e}")
+    return done
+
+
+def posts() -> list:
+    return json.loads(POSTS.read_text(encoding="utf-8")) if POSTS.exists() else []
+
+
+def refresh_stats():
+    """Pull Instagram's numbers for this page's reels posted 1 to 30 days ago (the first day undersells a reel;
+    after a month it has settled). Best effort: a failed lookup never stops a run."""
+    log, tok = posts(), os.environ.get("IG_TOKEN")
+    for p in log:
+        mid, age = p["ids"].get("instagram"), time.time() - p["at"]
+        if not (tok and mid and 86400 < age < 30 * 86400):
+            continue
+        try:
+            data = fb(requests.get(f"https://graph.facebook.com/{GRAPH}/{mid}/insights", timeout=30,
+                                   headers={"Authorization": f"OAuth {tok}"},
+                                   params={"metric": "views,reach,shares,saved,ig_reels_avg_watch_time"}))["data"]
+            p["stats"] = {d["name"]: d.get("total_value", {}).get("value", (d.get("values") or [{}])[0].get("value", 0))
+                          for d in data}
+        except Exception as e:
+            print(f"no Instagram numbers for {p['what']}: {e}")
+    if log:
+        POSTS.write_text(json.dumps(log, indent=1), encoding="utf-8")
+
+
+def track_record(log: list) -> str:
+    """What to tell Claude: the page's best and worst reels by views, once there are a few to compare."""
+    rated = sorted((p for p in log if p.get("stats")), key=lambda p: p["stats"].get("views", 0), reverse=True)
+    if len(rated) < 3:
+        return ""
+    def line(p):
+        st = p["stats"]
+        return (f"- {p['what']}: {st.get('views', 0)} views, {st.get('ig_reels_avg_watch_time', 0) / 1000:.0f} s "
+                f"average watch, {st.get('shares', 0)} shares, {st.get('saved', 0)} saves")
+    shown = rated if len(rated) <= 8 else rated[:5] + rated[-3:]
+    return ("How this page's past reels did on Instagram, best first. Choose and write more like the top ones (their "
+            "kind of story, opening and hook), and avoid what the bottom ones have in common:\n"
+            + "\n".join(map(line, shown)))
+
+
+def meta_setup():
+    """Turn one Meta system user token into each Page's settings (its own never-expiring Page token, and the
+    Instagram account linked to it), ready to paste into books.env / stories.env."""
+    token = input("Paste the system user token: ").strip()
+    pages = fb(requests.get(f"https://graph.facebook.com/{GRAPH}/me/accounts", timeout=30, params={
+        "access_token": token, "fields": "name,id,access_token,instagram_business_account"}))["data"]
+    if not pages:
+        sys.exit("no Pages: assign your Facebook Pages to the system user in Business Settings")
+    for pg in pages:
+        print(f"\n# {pg['name']}\nFB_PAGE_ID={pg['id']}\nFB_PAGE_TOKEN={pg['access_token']}")
+        if pg.get("instagram_business_account"):
+            print(f"IG_USER_ID={pg['instagram_business_account']['id']}\nIG_TOKEN={token}")
+        else:
+            print("# no Instagram account linked to this Page yet")
+
+
+def login(site: str):
+    """One-time sign-in for YouTube or TikTok: approve in the browser, then paste back the address it sends you
+    to (a "can't connect" page is fine, the code is in the address). Saves the refresh token to tokens.json."""
+    if site == "youtube":
+        cid, secret, redirect = os.environ["YT_CLIENT_ID"], os.environ["YT_CLIENT_SECRET"], "http://localhost"
+        url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode({
+            "client_id": cid, "redirect_uri": redirect, "response_type": "code", "access_type": "offline",
+            "prompt": "consent", "scope": "https://www.googleapis.com/auth/youtube.upload"})
+    elif site == "tiktok":
+        cid, secret, redirect = (os.environ["TIKTOK_CLIENT_KEY"], os.environ["TIKTOK_CLIENT_SECRET"],
+                                 os.environ["TIKTOK_REDIRECT_URI"])
+        url = "https://www.tiktok.com/v2/auth/authorize/?" + urllib.parse.urlencode({
+            "client_key": cid, "redirect_uri": redirect, "response_type": "code", "scope": "video.publish",
+            "state": "reelbot"})
+    else:
+        sys.exit("--login youtube or --login tiktok")
+    print(f"Open this, approve, then copy the address you land on:\n{url}\n")
+    code = urllib.parse.parse_qs(urllib.parse.urlparse(input("Address: ").strip()).query)["code"][0]
+    token_url = ("https://oauth2.googleapis.com/token" if site == "youtube"
+                 else "https://open.tiktokapis.com/v2/oauth/token/")
+    t = fb(requests.post(token_url, timeout=30, data={
+        "client_id" if site == "youtube" else "client_key": cid, "client_secret": secret, "code": code,
+        "redirect_uri": redirect, "grant_type": "authorization_code"}))
+    if "refresh_token" not in t:
+        sys.exit(f"sign-in failed: {t}")
+    save_token(site, t["refresh_token"])
+    print(f"{site} signed in")
+
+
 DEMO = Post(
     topic="speed of light", title="How Fast Is Light, Really?",
     hook="Light is the fastest thing in the universe, but space is big.",
@@ -389,41 +998,82 @@ DEMO = Post(
 
 
 def main():
-    demo, dry, reddit = "--demo" in sys.argv, "--dry-run" in sys.argv, "--reddit" in sys.argv
-    hist_file = HERE / ("reddit_history.json" if reddit else "history.json")
+    if "--env" in sys.argv:
+        use_env(HERE / sys.argv[sys.argv.index("--env") + 1])
+    if "--meta" in sys.argv:
+        return meta_setup()
+    if "--login" in sys.argv:
+        return login((sys.argv[sys.argv.index("--login") + 1:] or [""])[0])
+    demo, dry, reddit, book = (a in sys.argv for a in ("--demo", "--dry-run", "--reddit", "--book"))
+    if not (demo or dry or ready()):  # don't spend 20 minutes building a reel with nowhere to post it
+        sys.exit("posted nowhere: set up at least one platform (see the top of reelbot.py)")
+    hist_file = HERE / ("reddit_history.json" if reddit else "book_history.json" if book else "history.json")
     history = json.loads(hist_file.read_text()) if hist_file.exists() else []
     out = HERE / "out" / time.strftime("%Y-%m-%d_%H%M%S")
+    extra = {}
+    if not demo:
+        refresh_stats()
+    feedback = track_record(posts())
 
     if demo:
         video, key = build(trivia_slides(DEMO), DEMO.caption, out), None
     elif reddit:
         for sub in random.sample(SUBS, len(SUBS)):
             try:
-                posts = fetch_reddit(sub)
+                feed = fetch_reddit(sub)
             except requests.RequestException as e:  # one unreachable feed shouldn't sink the run
                 print(f"skipping r/{sub}: {e}")
                 continue
-            story, post = pick_story(sub, posts, history)
+            story, post = pick_story(sub, feed, history, feedback)
             if story:
                 break
         else:
             sys.exit("no suitable Reddit story found")
-        caption, key = story.caption, post["id"]
+        caption, key, what = story.caption, post["id"], f"r/{sub}: {story.title}"
         clips = [p for p in (HERE / "bg").glob("*") if p.suffix.lower() in (".mp4", ".mov", ".mkv", ".webm")]
         if not clips:
             print("no gameplay clips in bg/ - using a plain background")
         video = build(reddit_slides(sub, post["author"], story.title, story.story), caption, out,
                       pause=0.15, bg=random.choice(clips) if clips else None)
+    elif book:
+        name = sys.argv[sys.argv.index("--book") + 1:][:1]
+        recent = [p["style"] for p in posts()[-3:] if p.get("style")]
+        film = generate_film(history, name[0] if name and not name[0].startswith("--") else None, feedback, recent)
+        caption, key, what = film.caption, film.topic, f'{film.topic} as {film.style}, hook "{film.hook}"'
+        extra = {"style": film.style}
+        video = build_film(film, out)
     else:
         p = generate(history)
-        caption, key = p.caption, p.topic
+        caption, key, what = p.caption, p.topic, p.title
         video = build(trivia_slides(p), caption, out)
 
     print("built", video)
     if demo or dry:
         return
-    print("posted", upload(video, caption))
+    ids = publish(video, caption)
+    if not ids:
+        sys.exit("posted nowhere: set up at least one platform (see the top of reelbot.py)")
     hist_file.write_text(json.dumps(history + [key], indent=1))
+    POSTS.write_text(json.dumps(posts() + [{"what": what, "at": time.time(), "ids": ids, **extra}], indent=1), encoding="utf-8")
+
+
+def demo_feedback():
+    log = [{"what": f"book {i}", "at": 0, "ids": {}, "stats": {"views": v, "ig_reels_avg_watch_time": 9000}}
+           for i, v in enumerate([50, 9000, 300, 120, 7000, 15, 80, 640, 2200, 40])]
+    text = track_record(log)
+    lines = [ln for ln in text.splitlines() if ln.startswith("- ")]
+    assert [ln.split(":")[0] for ln in lines] == ["- book 1", "- book 4", "- book 8", "- book 7", "- book 2",
+                                                "- book 0", "- book 9", "- book 5"], lines  # top 5, bottom 3
+    assert "9 s average watch" in lines[0] and track_record(log[:2]) == ""
+
+
+def demo_align():
+    heard_ = [(0.0, 0.3, "Within"), (0.3, 0.4, "a"), (0.4, 0.6, "year,"), (0.7, 0.9, "let"), (0.9, 1.0, "out"),
+              (1.1, 1.5, "Dostovsky"), (1.5, 1.6, "eighteen"), (1.6, 1.9, "forty-eight.")]
+    got = align("Within a year, led out Dostoevsky 1848.", heard_)
+    assert [w for _, _, w in got] == ["Within", "a", "year,", "led", "out", "Dostoevsky", "1848."], got
+    want = [(0.7, 0.9), (1.1, 1.5), (1.5, 1.9)]  # "led", "Dostoevsky", "1848." get their misheard stretches
+    assert all(abs(a - x) < 1e-6 and abs(b - y) < 1e-6 for (a, b, _), (x, y) in zip([got[3], got[5], got[6]], want)), got
 
 
 if __name__ == "__main__":

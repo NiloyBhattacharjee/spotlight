@@ -4,3 +4,14 @@ bg/*
 !bg/.gitkeep
 history.json
 reddit_history.json
+music/*
+!music/.gitkeep
+book_history.json
+.venv-kokoro/
+.venv-chatterbox/
+tokens.json
+*.env
+*.tokens.json
+logs/
+posts.json
+*.posts.json
