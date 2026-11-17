@@ -1,0 +1,449 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /></head>
+  <body style="margin:0;background:transparent">
+    <script type="module">
+      // Mitu promo reel: a hook over a spray of "price?" DMs, the shop's WhatsApp chat played by Mitu, an end card.
+      import { kit, page, sfx, hash, clamp, lerp, expo, spring, presence, alpha } from "KIT";
+      import { REELS, HOOK_OUT, timeline } from "../../mitu_data.js";
+
+      const R = REELS[/*REEL*/"en"];
+      const TL = timeline(R);
+      const SANS = '"Segoe UI", "Nirmala UI", "Segoe UI Emoji", sans-serif';
+      const THEME = {
+        bg: ["#050E0B", "#0B1512"], glows: ["#10B981", "#14B8A6", "#047857"], dark: true, glow: 0.45,
+        ink: "#F4F7F5", mute: "rgba(244,247,245,0.66)", accent: "#34D399", accent2: "#5EEAD4", onAccent: "#04140D",
+        display: SANS, serif: 'Georgia, "Nirmala UI", serif', mono: 'Consolas, "Nirmala UI", monospace',
+      };
+      const WA = { bar: "#202c33", bg: "#0b141a", in: "#202c33", out: "#005c4b", text: "#e9edef", meta: "#8696a0", field: "#2a3942", green: "#00a884" };
+
+      // Phone geometry (1080x1920).
+      const PW = 800, PH = 1200, PX = (1080 - PW) / 2, PY = 430, BEZ = 16;
+      const SX = PX + BEZ, SY = PY + BEZ, SW = PW - 2 * BEZ, SH = PH - 2 * BEZ;
+      const STATUS = 48, HEAD = 112, INPUT = 112;
+      const WALL_TOP = SY + STATUS + HEAD, WALL_BOT = SY + SH - INPUT;
+      const FS = 33, LH = 44, PAD_X = 24, PAD_Y = 16, MAXW = SW * 0.74, GAP = 14, PHOTO_H = 330;
+      const PHONE_IN = HOOK_OUT, END = TL.endAt;
+
+      let bubbles; // laid out once, on the first frame
+      function wrap(ctx, text, maxW) {
+        ctx.font = `400 ${FS}px ${SANS}`;
+        const out = [];
+        let line = "";
+        for (const w of text.split(" ")) {
+          const next = line ? line + " " + w : w;
+          if (line && ctx.measureText(next).width > maxW) { out.push(line); line = w; } else line = next;
+        }
+        out.push(line);
+        return out;
+      }
+      function lay(ctx) {
+        const metaW = 110;
+        return R.lines.map(([who, text, kind], i) => {
+          const rows = wrap(ctx, text, MAXW - PAD_X * 2);
+          ctx.font = `400 ${FS}px ${SANS}`;
+          const lastW = ctx.measureText(rows.at(-1)).width;
+          const textW = Math.max(...rows.map((r) => ctx.measureText(r).width));
+          let w = Math.min(MAXW, Math.max(textW, lastW + metaW) + PAD_X * 2);
+          let h = rows.length * LH + PAD_Y * 2 + (lastW + metaW > MAXW - PAD_X * 2 ? 26 : 0);
+          if (kind === "photo") { w = MAXW; h += PHOTO_H + 10; }
+          if (kind === "voice") { w = 470; h = 116; }
+          return { who, rows, kind, w, h, at: TL.at[i], i };
+        });
+      }
+
+      const time = (i) => R.clock;
+      const camKeys = () => {
+        // A new framing as each line lands: the camera leans toward the newest message.
+        const z = [1.0, 1.07, 1.02, 1.08, 1.03, 1.06];
+        return TL.at.map((a, i) => [a - 0.15, z[i % z.length]]);
+      };
+      const KEYS = camKeys();
+
+      function camera(t) {
+        let z = 1, from = 1;
+        for (const [a, zz] of KEYS) if (t >= a) { from = z; z = zz; var since = t - a; }
+        const zoom = since === undefined ? 1 : lerp(from, z, expo(since / 0.7));
+        const drift = 1 + 0.02 * clamp((t - PHONE_IN) / (END - PHONE_IN));
+        return zoom * drift;
+      }
+
+      function draw(ctx, t, m) {
+        const k = kit(ctx, t, m, THEME);
+        bubbles ??= lay(ctx);
+        k.backdrop({ drift: 1.2 });
+        k.bokeh({ count: 22, opacity: 0.35 });
+
+        hook(k, t);
+        if (t > PHONE_IN - 0.1 && t < END + 0.8) phoneScene(k, t);
+        if (t > END - 0.2) endCard(k, t);
+
+        k.leak(PHONE_IN - 0.15, 0.9, ["#6EE7B7", "#14B8A6"]);
+        k.leak(END - 0.1, 0.9, ["#A7F3D0", "#34D399"]);
+        k.progress({ y: 1920 * 0.035 });
+        k.vignette(0.5);
+        k.grain(0.06);
+      }
+
+      // ---- hook: the title over a spray of unanswered DMs ----
+      function hook(k, t) {
+        if (t > HOOK_OUT + 0.6) return;
+        const { ctx } = k;
+        R.chips.forEach((text, i) => {
+          const at = 0.15 + i * 0.12;
+          if (t < at) return;
+          const above = i % 2 === 0;
+          const y = above ? 300 + (i / 2) * 58 % 380 : 1180 + ((i - 1) / 2) * 61 % 400;
+          const x = 120 + hash(i * 7.3) * 720;
+          const pin = spring(t, { start: at, stiffness: 240, damping: 16 });
+          const pout = clamp((t - HOOK_OUT + 0.25) / 0.45);
+          k.layer(() => {
+            ctx.font = `600 34px ${SANS}`;
+            const w = ctx.measureText(text).width + 92;
+            const cx = Math.min(1080 - 60 - w / 2, Math.max(60 + w / 2, x));
+            ctx.translate(cx, y - pout * 120 * (above ? 1 : -1));
+            ctx.scale(pin * (1 - pout * 0.4), pin * (1 - pout * 0.4));
+            k.fade(clamp(pin) * (1 - pout) * (0.55 + 0.45 * hash(i)));
+            ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 30; ctx.shadowOffsetY = 10;
+            ctx.fillStyle = WA.in;
+            ctx.beginPath(); ctx.roundRect(-w / 2, -36, w, 72, 36); ctx.fill();
+            ctx.shadowColor = "transparent";
+            ctx.fillStyle = WA.green;
+            ctx.beginPath(); ctx.arc(-w / 2 + 36, 0, 10, 0, 7); ctx.fill();
+            ctx.fillStyle = WA.text; ctx.textBaseline = "middle";
+            ctx.fillText(text, -w / 2 + 62, 2);
+          });
+        });
+        const lines = R.hook.map((l) => l.map((r) => r.accent ? { text: r.text, color: THEME.accent } : { text: r.text }));
+        k.layer(() => {
+          k.scrim({ y: 1920 * 0.44 });
+        });
+        k.title({ lines: [lines[0]], at: 0.25, out: HOOK_OUT - 0.3, y: 1920 * 0.41, size: 150, style: "slam" });
+        k.title({ lines: [lines[1]], at: 0.85, out: HOOK_OUT - 0.3, y: 1920 * 0.41 + 165, size: 70, style: "rise" });
+      }
+
+      // ---- the chat ----
+      function phoneScene(k, t) {
+        const { ctx } = k;
+        const pin = spring(t, { start: PHONE_IN, stiffness: 120, damping: 15 });
+        const pout = clamp((t - END + 0.1) / 0.6);
+        const z = camera(t);
+        const fy = PY + PH * 0.72;
+        if (R.lang === "bn") k.layer(() => { // the kit's kicker spells letter by letter, which breaks Bangla conjuncts
+          k.fade(presence(t, PHONE_IN + 0.4, END - 0.2, 0.5, 0.3));
+          ctx.font = `600 40px ${SANS}`; ctx.fillStyle = THEME.accent; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(R.kicker, 540, 300);
+        });
+        else k.kicker({ text: R.kicker, at: PHONE_IN + 0.4, out: END - 0.2, y: 300, size: 32 });
+        k.layer(() => {
+          k.fade(clamp(pin) * (1 - pout));
+          ctx.translate(540, fy + (1 - pin) * 500 + pout * 300);
+          ctx.scale(z * lerp(0.9, 1, clamp(pin)), z * lerp(0.9, 1, clamp(pin)));
+          ctx.translate(-540, -fy);
+          phone(k, t);
+          floats(k, t);
+        });
+      }
+
+      function phone(k, t) {
+        const { ctx } = k;
+        // body
+        k.layer(() => {
+          ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 90; ctx.shadowOffsetY = 40;
+          ctx.fillStyle = "#1b1b1d";
+          ctx.beginPath(); ctx.roundRect(PX, PY, PW, PH, 76); ctx.fill();
+        });
+        k.layer(() => {
+          ctx.strokeStyle = "rgba(255,255,255,0.14)"; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.roundRect(PX + 1.5, PY + 1.5, PW - 3, PH - 3, 75); ctx.stroke();
+        });
+        k.layer(() => {
+          ctx.beginPath(); ctx.roundRect(SX, SY, SW, SH, 62); ctx.clip();
+          ctx.fillStyle = WA.bg; ctx.fillRect(SX, SY, SW, SH);
+          wallpaper(k);
+          chat(k, t);
+          // status bar + header
+          ctx.fillStyle = WA.bar; ctx.fillRect(SX, SY, SW, STATUS + HEAD);
+          ctx.fillStyle = "#fff"; ctx.textBaseline = "middle";
+          ctx.font = `600 26px ${SANS}`; ctx.fillText(R.clock, SX + 54, SY + 30);
+          [8, 13, 18, 23].forEach((h, i) => ctx.fillRect(SX + SW - 150 + i * 9, SY + 40 - h, 6, h));
+          ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.roundRect(SX + SW - 100, SY + 20, 44, 22, 5); ctx.stroke();
+          ctx.fillRect(SX + SW - 97, SY + 23, 30, 16);
+          const hy = SY + STATUS + HEAD / 2;
+          ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; ctx.lineCap = "round";
+          ctx.beginPath(); ctx.moveTo(SX + 44, hy - 14); ctx.lineTo(SX + 30, hy); ctx.lineTo(SX + 44, hy + 14); ctx.stroke();
+          const g = ctx.createLinearGradient(SX + 66, hy - 34, SX + 134, hy + 34);
+          g.addColorStop(0, "#6EE7B7"); g.addColorStop(1, "#0D9488");
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(SX + 100, hy, 34, 0, 7); ctx.fill();
+          ctx.fillStyle = "#fff"; ctx.font = `600 32px ${SANS}`; ctx.textAlign = "center";
+          ctx.fillText(R.shop[0], SX + 100, hy + 1); ctx.textAlign = "left";
+          ctx.font = `600 32px ${SANS}`; ctx.fillText(R.shop, SX + 152, hy - 17);
+          const typing = TL.typing.some(([a, b]) => t >= a && t < b);
+          ctx.font = `400 24px ${SANS}`; ctx.fillStyle = typing ? "#6EE7B7" : "rgba(255,255,255,0.75)";
+          ctx.fillText(typing ? R.typing : R.online, SX + 152, hy + 20);
+          // input bar
+          const iy = SY + SH - INPUT;
+          ctx.fillStyle = WA.bar; ctx.fillRect(SX, iy, SW, INPUT);
+          ctx.fillStyle = WA.field; ctx.beginPath(); ctx.roundRect(SX + 18, iy + 20, SW - 140, 72, 36); ctx.fill();
+          ctx.fillStyle = WA.meta; ctx.font = `400 30px ${SANS}`; ctx.fillText(R.message, SX + 60, iy + 57);
+          ctx.fillStyle = WA.green; ctx.beginPath(); ctx.arc(SX + SW - 66, iy + 56, 38, 0, 7); ctx.fill();
+          ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.roundRect(SX + SW - 74, iy + 36, 16, 28, 8); ctx.fill();
+          ctx.strokeStyle = "#fff"; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.arc(SX + SW - 66, iy + 54, 14, 0.15, Math.PI - 0.15); ctx.moveTo(SX + SW - 66, iy + 68); ctx.lineTo(SX + SW - 66, iy + 76); ctx.stroke();
+        });
+      }
+
+      function wallpaper(k) {
+        const { ctx } = k;
+        ctx.strokeStyle = "rgba(255,255,255,0.035)"; ctx.lineWidth = 2;
+        for (let i = 0; i < 70; i++) {
+          const x = SX + hash(i * 3.1) * SW, y = WALL_TOP + hash(i * 5.7) * (WALL_BOT - WALL_TOP), r = 8 + hash(i) * 10;
+          ctx.beginPath();
+          if (i % 3 === 0) ctx.arc(x, y, r, 0, 7); else if (i % 3 === 1) ctx.rect(x - r, y - r, r * 1.6, r * 2.2);
+          else { ctx.moveTo(x - r, y); ctx.lineTo(x + r, y); ctx.moveTo(x, y - r); ctx.lineTo(x, y + r); }
+          ctx.stroke();
+        }
+      }
+
+      function chat(k, t) {
+        const { ctx } = k;
+        const typingIn = TL.typing.map(([a, b]) => clamp((t - a) / 0.25) * (1 - clamp((t - b + 0.05) / 0.12)));
+        const typeH = 76;
+        // Stack from the bottom: each item pushes everything above it up as it appears.
+        let y = WALL_BOT - 18;
+        const items = [];
+        bubbles.forEach((b, i) => items.push({ b, p: expo((t - b.at) / 0.4) }));
+        // the typing dots sit after the line before Mitu's reply
+        let ti = 0;
+        const seq = [];
+        bubbles.forEach((b) => {
+          if (b.who === "mitu") seq.push({ typing: ti++ });
+          seq.push(items[b.i]);
+        });
+        for (let j = seq.length - 1; j >= 0; j--) {
+          const s = seq[j];
+          if (s.typing !== undefined) {
+            const p = typingIn[s.typing];
+            if (p <= 0) continue;
+            y -= (typeH + GAP) * p;
+            typingBubble(k, t, y, p);
+          } else {
+            if (s.p <= 0) continue;
+            y -= (s.b.h + GAP) * s.p;
+            if (y + s.b.h < WALL_TOP - 40) continue;
+            bubble(k, t, s.b, y, s.p);
+          }
+        }
+        // date chip once the chat has room above it
+        k.layer(() => {
+          if (y - 70 < WALL_TOP) return;
+          ctx.font = `500 24px ${SANS}`;
+          const w = ctx.measureText(R.today).width + 36;
+          ctx.fillStyle = "#182229"; ctx.beginPath(); ctx.roundRect(540 - w / 2, y - 64, w, 44, 10); ctx.fill();
+          ctx.fillStyle = WA.meta; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(R.today, 540, y - 41);
+        });
+      }
+
+      function bubble(k, t, b, y, p) {
+        const { ctx } = k;
+        const out = b.who === "them";
+        const x = out ? SX + SW - 26 - b.w : SX + 26;
+        k.layer(() => {
+          k.fade(clamp(p * 1.6));
+          const s = lerp(0.82, 1, p);
+          const ox = out ? x + b.w : x, oy = y + b.h;
+          ctx.translate(ox, oy); ctx.scale(s, s); ctx.translate(-ox, -oy);
+          ctx.shadowColor = "rgba(0,0,0,0.35)"; ctx.shadowBlur = 4; ctx.shadowOffsetY = 2;
+          ctx.fillStyle = out ? WA.out : WA.in;
+          ctx.beginPath(); ctx.roundRect(x, y, b.w, b.h, out ? [22, 6, 22, 22] : [6, 22, 22, 22]); ctx.fill();
+          ctx.shadowColor = "transparent";
+          let ty = y + PAD_Y;
+          if (b.kind === "photo") { postShot(k, x + 10, y + 10, b.w - 20, PHOTO_H); ty += PHOTO_H + 10; }
+          if (b.kind === "voice") voiceNote(k, t, b, x, y);
+          else {
+            ctx.fillStyle = WA.text; ctx.font = `400 ${FS}px ${SANS}`; ctx.textBaseline = "middle";
+            b.rows.forEach((r, i) => ctx.fillText(r, x + PAD_X, ty + LH * i + LH / 2));
+          }
+          ctx.font = `400 21px ${SANS}`; ctx.fillStyle = out ? "rgba(233,237,239,0.65)" : WA.meta;
+          const meta = R.clock;
+          const mw = ctx.measureText(meta).width;
+          const right = x + b.w - PAD_X - (out ? 36 : 0);
+          ctx.fillText(meta, right - mw, y + b.h - 22);
+          if (out) {
+            const read = bubbles.some((o) => o.who === "mitu" && o.i > b.i && t > o.at - 0.9);
+            ctx.strokeStyle = read ? "#53bdeb" : WA.meta; ctx.lineWidth = 2.6; ctx.lineCap = "round";
+            const cx = right + 8, cy = y + b.h - 22;
+            ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + 6, cy + 6); ctx.lineTo(cx + 16, cy - 6);
+            ctx.moveTo(cx + 10, cy + 6); ctx.lineTo(cx + 20, cy - 6); ctx.stroke();
+          }
+        });
+      }
+
+      // A voice note: play button, waveform that plays through once it's sent (Mitu listening), its length.
+      function voiceNote(k, t, b, x, y) {
+        const { ctx } = k;
+        const played = clamp((t - b.at - 0.3) / (R.lines[b.i][4] ?? 1.1));
+        const cy = y + 46;
+        ctx.fillStyle = "#e9edef";
+        ctx.beginPath();
+        if (played > 0 && played < 1) { ctx.rect(x + 30, cy - 15, 9, 30); ctx.rect(x + 46, cy - 15, 9, 30); }
+        else { ctx.moveTo(x + 32, cy - 18); ctx.lineTo(x + 58, cy); ctx.lineTo(x + 32, cy + 18); ctx.closePath(); }
+        ctx.fill();
+        const bars = 30, bx = x + 84, bw = 300;
+        for (let i = 0; i < bars; i++) {
+          const h = 8 + 34 * Math.abs(Math.sin(i * 1.7 + b.i)) * (0.4 + 0.6 * hash(i + b.i * 31));
+          ctx.fillStyle = i / bars < played ? "#53bdeb" : "rgba(233,237,239,0.45)";
+          ctx.beginPath(); ctx.roundRect(bx + i * (bw / bars), cy - h / 2, 5, h, 2.5); ctx.fill();
+        }
+        ctx.fillStyle = "#53bdeb"; ctx.beginPath(); ctx.arc(bx + bw * played, cy, 10, 0, 7); ctx.fill();
+        // the sender's avatar with a mic badge
+        ctx.fillStyle = "#6b7c85"; ctx.beginPath(); ctx.arc(x + b.w - 50, cy, 32, 0, 7); ctx.fill();
+        ctx.fillStyle = "#cfd8dc"; ctx.beginPath(); ctx.arc(x + b.w - 50, cy - 8, 11, 0, 7); ctx.fill();
+        ctx.beginPath(); ctx.arc(x + b.w - 50, cy + 20, 19, Math.PI, 0); ctx.fill();
+        ctx.fillStyle = "#53bdeb"; ctx.font = `400 22px ${SANS}`; ctx.textBaseline = "middle";
+        ctx.fillText("🎙", x + b.w - 82, cy + 24);
+        ctx.fillStyle = "rgba(233,237,239,0.65)"; ctx.font = `400 21px ${SANS}`;
+        ctx.fillText(b.rows[0], bx, y + b.h - 22);
+      }
+
+      // A screenshot of the shop's Facebook post, for "how much is this one?"
+      function postShot(k, x, y, w, h) {
+        const { ctx } = k;
+        k.layer(() => {
+          ctx.beginPath(); ctx.roundRect(x, y, w, h, 16); ctx.clip();
+          ctx.fillStyle = "#f0f2f5"; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = "#fff"; ctx.fillRect(x, y, w, 62);
+          ctx.fillStyle = "#0D9488"; ctx.beginPath(); ctx.arc(x + 34, y + 31, 18, 0, 7); ctx.fill();
+          ctx.fillStyle = "#050505"; ctx.font = `600 22px ${SANS}`; ctx.textBaseline = "middle";
+          ctx.fillText("Nakshi Threads", x + 62, y + 24);
+          ctx.fillStyle = "#65676b"; ctx.font = `400 18px ${SANS}`; ctx.fillText("New in · Sponsored", x + 62, y + 46);
+          const g = ctx.createLinearGradient(x, y + 62, x + w, y + h);
+          g.addColorStop(0, "#F6C453"); g.addColorStop(1, "#C98A12");
+          ctx.fillStyle = g; ctx.fillRect(x, y + 62, w, h - 62);
+          // the kurti
+          const cx = x + w / 2, top = y + 92;
+          ctx.fillStyle = "#E2A320"; ctx.strokeStyle = "rgba(90,50,0,0.35)"; ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(cx - 44, top); ctx.lineTo(cx - 110, top + 50); ctx.lineTo(cx - 92, top + 92); ctx.lineTo(cx - 64, top + 74);
+          ctx.lineTo(cx - 80, top + 222); ctx.lineTo(cx + 80, top + 222); ctx.lineTo(cx + 64, top + 74); ctx.lineTo(cx + 92, top + 92);
+          ctx.lineTo(cx + 110, top + 50); ctx.lineTo(cx + 44, top); ctx.quadraticCurveTo(cx, top + 34, cx - 44, top);
+          ctx.fill(); ctx.stroke();
+          ctx.strokeStyle = "#7A3E0A"; ctx.lineWidth = 2.5;
+          for (let i = 0; i < 7; i++) { ctx.beginPath(); ctx.arc(cx, top + 40 + i * 24, 7, 0, 7); ctx.stroke(); }
+          for (let i = 0; i < 9; i++) { ctx.beginPath(); ctx.arc(cx - 68 + i * 17, top + 206, 5, 0, 7); ctx.stroke(); }
+        });
+      }
+
+      function typingBubble(k, t, y, p) {
+        const { ctx } = k;
+        k.layer(() => {
+          k.fade(p);
+          ctx.fillStyle = WA.in;
+          ctx.beginPath(); ctx.roundRect(SX + 26, y, 120, 76, [6, 22, 22, 22]); ctx.fill();
+          for (let i = 0; i < 3; i++) {
+            const b = Math.max(0, Math.sin((t * 7 - i * 0.9)));
+            ctx.fillStyle = alpha("#8696a0", 0.6 + 0.4 * b);
+            ctx.beginPath(); ctx.arc(SX + 58 + i * 28, y + 38 - b * 7, 8, 0, 7); ctx.fill();
+          }
+        });
+      }
+
+      // Cards that pop off the phone's edge when a line lands: what Mitu just did.
+      function floats(k, t) {
+        const { ctx } = k;
+        R.floats.forEach(([line, icon, text, side], n) => {
+          const same = R.floats.filter((f, j) => j < n && f[0] === line).length;
+          const at = TL.at[line] + 0.35 + same * 0.5;
+          if (t < at) return;
+          const pin = spring(t, { start: at, stiffness: 220, damping: 14 });
+          const life = presence(t, at, END - 0.3, 0.2, 0.3);
+          k.layer(() => {
+            ctx.font = `600 34px ${SANS}`;
+            const w = ctx.measureText(text).width + 120, h = 88;
+            const y = side === "right" ? PY + 170 + same * 120 : PY + 560 + same * 120;
+            const x = side === "right" ? PX + PW - w + 70 : PX - 70;
+            ctx.translate(x + w / 2, y + h / 2); ctx.scale(pin, pin); ctx.rotate((side === "right" ? 1 : -1) * 0.025);
+            k.fade(life);
+            ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 50; ctx.shadowOffsetY = 18;
+            ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, 26); ctx.fill();
+            ctx.shadowColor = "transparent";
+            ctx.fillStyle = "#E2F4EB"; ctx.beginPath(); ctx.arc(-w / 2 + 48, 0, 26, 0, 7); ctx.fill();
+            ctx.fillStyle = "#0C9467"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.font = `700 28px ${SANS}`; ctx.fillText(icon, -w / 2 + 48, 1);
+            ctx.textAlign = "left"; ctx.fillStyle = "#18181b"; ctx.font = `600 34px ${SANS}`;
+            ctx.fillText(text, -w / 2 + 90, 2);
+          });
+        });
+      }
+
+      // ---- end card ----
+      function endCard(k, t) {
+        const { ctx } = k;
+        const a = END + 0.2;
+        const pin = spring(t, { start: a, stiffness: 200, damping: 13 });
+        k.layer(() => {
+          k.fade(clamp((t - a) / 0.25));
+          ctx.translate(540, 560); ctx.scale(pin, pin);
+          ctx.shadowColor = alpha("#10B981", 0.6); ctx.shadowBlur = 80;
+          const g = ctx.createLinearGradient(-90, -90, 90, 90);
+          g.addColorStop(0, "#34D399"); g.addColorStop(1, "#0D9488");
+          ctx.fillStyle = g; ctx.beginPath(); ctx.roundRect(-90, -90, 180, 180, 46); ctx.fill();
+          ctx.shadowColor = "transparent";
+          ctx.fillStyle = "#fff"; ctx.font = `700 110px ${SANS}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText("M", 0, 6);
+        });
+        k.title({ lines: [[{ text: R.lang === "bn" ? "মিতু" : "Mitu" }]], at: a + 0.2, y: 740, size: 96 });
+        const lines = R.end.map((l) => l.map((r) => r.accent ? { text: r.text, color: THEME.accent } : { text: r.text }));
+        k.title({ lines, at: a + 0.55, y: 950, size: 92, leading: 1.15 });
+        k.layer(() => {
+          const p = clamp((t - a - 1.3) / 0.5);
+          k.fade(p);
+          ctx.font = `italic 400 44px ${THEME.serif}`; ctx.fillStyle = THEME.mute; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(R.endSub, 540, 1135 + (1 - expo(p)) * 20, 960);
+        });
+        // channel chips, one after another
+        k.layer(() => {
+          ctx.font = `600 30px ${SANS}`;
+          const ws = R.channels.map((c) => ctx.measureText(c).width + 48);
+          const rows = [ws.slice(0, 3), ws.slice(3)];
+          let n = 0;
+          rows.forEach((row, ri) => {
+            const total = row.reduce((s, w) => s + w, 0) + (row.length - 1) * 16;
+            let x = 540 - total / 2;
+            row.forEach((w) => {
+              const i = n++;
+              const p = expo((t - a - 1.7 - i * 0.1) / 0.45);
+              if (p > 0) k.layer(() => {
+                k.fade(p);
+                const y = 1290 + ri * 86 + (1 - p) * 30;
+                ctx.fillStyle = "rgba(52,211,153,0.12)"; ctx.strokeStyle = "rgba(52,211,153,0.45)"; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.roundRect(x, y - 32, w, 64, 32); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = "#D1FAE5"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+                ctx.fillText(R.channels[i], x + w / 2, y + 1);
+              });
+              x += w + 16;
+            });
+          });
+        });
+      }
+
+      function audio(m) {
+        const s = [{ path: "music.wav", at: 0, volume: 0.32, duck: true }];
+        R.lines.forEach(([, , , voice], i) => voice && s.push({ path: "../../" + voice, at: TL.at[i] + 0.3, volume: 1 }));
+        s.push({ path: sfx("impact"), at: 0.25, volume: 0.7 });
+        R.chips.forEach((_, i) => i % 2 === 0 && s.push({ path: sfx("tick"), at: 0.15 + i * 0.12, volume: 0.35 }));
+        s.push({ path: sfx("whoosh"), at: PHONE_IN - 0.2, volume: 0.6 });
+        R.lines.forEach(([who], i) => s.push({ path: sfx(who === "mitu" ? "pop" : "click"), at: TL.at[i], volume: who === "mitu" ? 0.55 : 0.45 }));
+        R.floats.forEach(([line], n) => s.push({ path: sfx("shimmer"), at: TL.at[line] + 0.35 + R.floats.filter((f, j) => j < n && f[0] === line).length * 0.5, volume: 0.4 }));
+        s.push({ path: sfx("whoosh"), at: END - 0.15, volume: 0.6 });
+        s.push({ path: sfx("impact"), at: END + 0.25, volume: 0.6 });
+        s.push({ path: sfx("shimmer"), at: END + 0.7, volume: 0.5 });
+        return s;
+      }
+
+      page(draw, { audio });
+    </script>
+  </body>
+</html>
