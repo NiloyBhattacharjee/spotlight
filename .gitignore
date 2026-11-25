@@ -3,6 +3,7 @@ out/
 bg/*
 !bg/.gitkeep
 history.json
+variety_history.json
 reddit_history.json
 music/*
 !music/.gitkeep
@@ -16,3 +17,6 @@ logs/
 posts.json
 *.posts.json
 promo/mitu/build/
+scp_history.json
+scp_cache/
+scp_voice.wav

@@ -1,5 +1,5 @@
-# Runs slopcannon on its own every day through Windows Task Scheduler: the books page and the Reddit stories page,
-# each twice a day, with its settings in books.env / stories.env (see page.env.example). Run once (again after changing a time):  powershell -ExecutionPolicy Bypass -File schedule.ps1
+# Runs slopcannon on its own every day through Windows Task Scheduler: the books page, the Reddit stories page and the SCP page,
+# each twice a day, with its settings in books.env / stories.env / scp.env (see page.env.example). Run once (again after changing a time):  powershell -ExecutionPolicy Bypass -File schedule.ps1
 # The PC has to be on and you signed in (a locked screen is fine). Missed runs start as soon as it's back on.
 # Output goes to logs\<page>.log. Remove a page with:  Unregister-ScheduledTask "slopcannon books"
 
@@ -23,3 +23,5 @@ function Add-Page($name, $reelArgs, $times) {
 Add-Page "books" "--book --env books.env" @("10:40", "18:40")
 # Reddit reels take a few minutes.
 Add-Page "stories" "--reddit --env stories.env" @("12:55", "20:55")
+# SCP reels take about 10 minutes (Chatterbox on CPU); they go out around 5 pm and 11 pm, when horror does best.
+Add-Page "scp" "--scp --env scp.env" @("16:50", "22:50")

@@ -11,6 +11,8 @@ slopcannon is one Python script, `slopcannon.py`. Claude writes the script for e
 | Mode | Command | What you get |
 |---|---|---|
 | Trivia | `python slopcannon.py` | An infographic reel of surprising facts, narrated with Edge TTS. |
+| Variety | `python slopcannon.py --variety` | A different listicle each run: would you rather, red flags, ranked, fake or real, unpopular opinions or nobody tells you. It never repeats the last two formats. |
+| SCP lore | `python slopcannon.py --scp` or `--scp SCP-173` | A random SCP article rated 100 or more, narrated in about 60 seconds by a tired researcher, a guard, an incident report and so on. The voice is gloomy and expressive, from Chatterbox running locally (it copies `scp_voice.wav`; Kokoro if Chatterbox isn't set up), over a synthesized suspense drone with a heartbeat. Articles come from the SCP dataset at scp-data.tedivm.com, and every reel credits the author under CC BY-SA 3.0. |
 | Reddit stories | `python slopcannon.py --reddit` | A popular drama or revenge post retold in Claude's own words over gameplay footage from `bg/`. It is credited "Based on a story by u/… on r/…". |
 | Classic books | `python slopcannon.py --book` or `--book "White Nights"` | A story reel in the style of TED-Ed about a public-domain classic. It has flat-vector art from Cloudflare Workers AI (Pollinations if Cloudflare isn't set up), a Kokoro narrator that matches the story's mood (sombre, eerie, tense, tender or wry), ambience for the setting (rain, snow, mist, embers or dust), and a motion layer drawn by mockingbird (`book_motion.html`). The final mix is levelled to −14 LUFS. |
 | Test | `python slopcannon.py --demo` | A built-in trivia sample. It makes no API calls and posts nothing. |
@@ -56,6 +58,7 @@ Run `schedule.ps1` once, in PowerShell, to register two Windows Task Scheduler j
 |---|---|---|
 | `slopcannon books` | `--book --env books.env` | 10:40 and 18:40 |
 | `slopcannon stories` | `--reddit --env stories.env` | 12:55 and 20:55 |
+| `slopcannon scp` | `--scp --env scp.env` | 16:50 and 22:50 |
 
 Each job catches up after the PC was asleep, wakes the PC to run, and retries twice. Output goes to `logs/<page>.log`.
 
