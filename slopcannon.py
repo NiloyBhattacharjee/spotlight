@@ -100,19 +100,11 @@ CHATTERBOX_PY = HERE / ".venv-chatterbox" / "Scripts" / "python.exe"
 ORPHEUS = HERE / ".orpheus"  # Orpheus 3B on llama.cpp (Vulkan, so it runs on an AMD card), decoded by SNAC
 ORPHEUS_SERVER = ORPHEUS / "llama" / "llama-server.exe"
 ORPHEUS_MODEL = ORPHEUS / "Orpheus-3b-FT-Q8_0.gguf"
-ORPHEUS_VOICE = "zac"  # its male voices: zac (deepest, flattest), leo, dan (also tara, leah, jess, mia, zoe)
+ORPHEUS_VOICE = "leo"  # its male voices: leo (the most shaken-sounding), zac (deepest, flattest), dan (also tara, leah, jess, mia, zoe)
 SCP_VOICE = HERE / "scp_voice.wav"  # the narrator Chatterbox copies
-SCP_PITCH = 0.82  # the narrator pitched down, darker (formants kept, so not a chipmunk in reverse)
-SCP_GLITCH = 0.7  # how often a line's tape goes wrong: a word stutters, drops out, crackles or skips backwards
-SCP_SPEED = 0.85  # SCP narration tempo: 1 is as the model reads it, lower is slower (the pitch stays put)
-# a voice on an old cassette: pitched down and slowed, with something faint speaking along an octave under it, the
-# band a tape holds (consonants kept, so every word reads), wow (a slow wobble) and flutter (a fast one), tape
-# saturation, then a dim room. Its labels are scp_ so they can't clash with build()'s graph.
-SCP_FX = (f"rubberband=tempo={SCP_SPEED}:pitch={SCP_PITCH}:formant=preserved,asplit[scp_v][scp_u];"
-          "[scp_u]rubberband=pitch=0.5:formant=preserved,adelay=25,volume=0.3[scp_d];"
-          "[scp_v][scp_d]amix=inputs=2:normalize=0,highpass=f=80,lowpass=f=7000,"
-          "vibrato=f=0.6:d=0.05,vibrato=f=6.5:d=0.015,volume=2.5,asoftclip=type=tanh,volume=0.4,"
-          f"aecho=0.8:0.6:60|140:0.2|0.12,{VOICE_FX}")
+SCP_GLITCH = 0  # how often a line's tape goes wrong (a stutter, dropout, crackle or skip): 0 keeps the voice straight
+# the narrator as recorded, no pitching or tape effects, so they sound like a real person: just a small, quiet room
+SCP_FX = f"highpass=f=80,aecho=0.8:0.5:35:0.07,{VOICE_FX}"
 SCP_DATA = "https://scp-data.tedivm.com/data/scp/items/"  # every SCP article with its author, from the wiki (CC BY-SA 3.0)
 SCP_CACHE = HERE / "scp_cache"
 KOKORO_VOICE = "am_onyx"  # deep American male; also try am_fenrir, bm_lewis or bm_george (b = British)
@@ -214,12 +206,14 @@ Pick ONE narrator and stay in them:
 - the last one left from the team that found it
 - someone outside the Foundation who saw it once and was told to forget
 Put the narrator you picked in "voice", then never mention it in the script.
-First person, past tense ("I remember...", "We used to...", "By the third week..."). They are tired and quiet,
-not excited: no exclamation marks, nothing shouted, nothing hyped. Let them lose the thread for a second, correct
-themselves, linger on a small detail they can't shake. Dread comes from how calmly they say it. No question
-marks: even a question comes out flat, as a statement with a full stop. Low and worn out, but human: grief,
-guilt or fear breaking through at a moment or two, the way it does when you finally say something out loud. It
-sounds like a tape they recorded alone at night: an "um" or an "I... I" where they falter, a word repeated.
+First person, past tense ("I remember...", "We used to...", "By the third week..."). This is a real person who
+went through something terrible and never got over it. They are still scared, and it shows: they have trouble
+getting the words out, they stop and start again, they skip past the worst part and then make themselves come
+back to it. Some of it they've never told anyone. Nothing performed, nothing shouted, no exclamation marks, no
+spooky-storyteller voice: the fear is in how hard it is for them to say it plainly. No question marks: even a
+question comes out flat, as a statement with a full stop. Write it the way a shaken person actually talks: an
+"um", an "I... I" where they falter, a sentence they abandon halfway, a word said twice, a short "sorry" when
+they lose it for a second, a small detail they can't stop seeing.
 
 HOW IT SHOULD SOUND
 - Like a real person talking, not a writer showing off. Short sentences mixed with the odd longer one. Some fragments are fine.
@@ -228,8 +222,8 @@ HOW IT SHOULD SOUND
 - Let the creepy part come from facts, not adjectives. Don't tell the viewer it's scary.
 - Leave some things unexplained. Don't wrap it up neatly.
 - It's fine to have a dry or dark joke if the voice fits.
-- The narrator's voice can break: write <sigh>, <sniffle>, <groan> or <cough> where a memory gets to them, at
-  most three in the script, at the start or end of a line.
+- The narrator's voice can break: write <sigh>, <sniffle>, <gasp>, <groan> or <cough> where a memory gets to
+  them, at most four in the script, at the start or end of a line.
 
 OPENING (first 3 seconds, this matters most)
 Start mid-thought or with a concrete detail. Pick a hook type you haven't used recently and put it in "hook_type":
@@ -264,7 +258,7 @@ Openers and endings already used. Don't reuse their structure or wording:
 
 OUTPUT
 - lines: the script, one sentence or short beat per line so it's easy to time to clips. Mark pauses with a line
-  that is just (pause). No headings, no emojis, no stage directions beyond (pause) and those four.
+  that is just (pause). No headings, no emojis, no stage directions beyond (pause) and those five.
 - Punctuate it for the voice that reads it, which pauses only where the punctuation tells it to: a comma wherever
   a person would take a small breath, an ellipsis (...) where the voice trails off or hangs before a reveal, a full
   stop between thoughts. Let most lines be a full sentence that flows into the next; a run of one- and two-word
@@ -1115,7 +1109,7 @@ def scp_motion(video: Path, scp: str, cls: str, lines: list[str], pops: list[str
     out = video.parent
     t, timed = 0.0, []
     for i, text in enumerate(lines):
-        spoken = 0.85 * duration(out / f"{i}.wav") / SCP_SPEED  # ponytail: a paragraph's last line ends in its pause; typing a bit early reads fine
+        spoken = 0.85 * duration(out / f"{i}.wav")  # ponytail: a paragraph's last line ends in its pause; typing a bit early reads fine
         timed.append({"text": re.sub(UNSPOKEN, " ", text).strip(), "at": round(t, 2),
                       "end": round(t + max(spoken, 0.3), 2)})
         t += duration(out / f"{i}.mp4")
