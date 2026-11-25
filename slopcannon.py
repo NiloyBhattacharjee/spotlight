@@ -4,26 +4,26 @@ Claude runs through the Claude Code CLI (`claude -p`, your Claude login), so no 
 Posting goes to every platform that is set up (env vars; one failing doesn't stop the others):
   Instagram  IG_USER_ID, IG_TOKEN (instagram_basic, instagram_content_publish, instagram_manage_insights)
   Facebook   FB_PAGE_ID, FB_PAGE_TOKEN (pages_show_list, pages_read_engagement, pages_manage_posts)
-             With a Meta system user token: python reelbot.py --meta  prints all four for each of your Pages
-  YouTube    YT_CLIENT_ID, YT_CLIENT_SECRET (a Desktop OAuth client), then once: python reelbot.py --login youtube
-  TikTok     TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_REDIRECT_URI, then once: python reelbot.py --login tiktok
+             With a Meta system user token: python slopcannon.py --meta  prints all four for each of your Pages
+  YouTube    YT_CLIENT_ID, YT_CLIENT_SECRET (a Desktop OAuth client), then once: python slopcannon.py --login youtube
+  TikTok     TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_REDIRECT_URI, then once: python slopcannon.py --login tiktok
              TIKTOK_PRIVACY defaults to SELF_ONLY: TikTok allows only private posts until the app passes its audit
   Two pages, one niche each: put a page's settings in an env file (copy page.env.example) and pass --env books.env.
   Its platform settings replace the environment's, so a reel never lands on the other page; its YouTube/TikTok
   sign-ins go to books.tokens.json. schedule.ps1 runs each page on its own daily times.
   Feedback loop: every posted reel is logged (books.posts.json); each run pulls Instagram's views, average watch
   time and shares for reels 1-30 days old and tells Claude what did best and worst before it picks the next one.
-  python reelbot.py              trivia infographic reel, posted
-  python reelbot.py --reddit     drama/revenge Reddit story reel (r/AmItheAsshole, r/pettyrevenge, ...), posted
-  python reelbot.py --book       animated story of a public-domain classic, told TED-Ed style, posted
-  python reelbot.py --book "White Nights"   the same, for a book you choose
+  python slopcannon.py              trivia infographic reel, posted
+  python slopcannon.py --reddit     drama/revenge Reddit story reel (r/AmItheAsshole, r/pettyrevenge, ...), posted
+  python slopcannon.py --book       animated story of a public-domain classic, told TED-Ed style, posted
+  python slopcannon.py --book "White Nights"   the same, for a book you choose
   --book draws its motion layer (book_motion.html: title, captions, mist, light) with mockingbird when installed,
   else burns plain captions in.
   add --dry-run to build without posting
   --book narrates with Kokoro (open-source, local) in the story's mood once set up, else Edge. Needs Python 3.10-3.12:
     py -3.11 -m venv .venv-kokoro
     .venv-kokoro/Scripts/pip install kokoro soundfile en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
-  python reelbot.py --demo       render a built-in trivia sample (no API calls) to test the pipeline
+  python slopcannon.py --demo       render a built-in trivia sample (no API calls) to test the pipeline
 """
 import asyncio, base64, html, io, json, os, random, re, shutil, subprocess, sys, time
 import urllib.parse
@@ -249,7 +249,7 @@ def fetch_reddit(sub: str) -> list[dict]:
     # Reddit's JSON API now needs an approved app; the public RSS feed still works without one.
     for _ in range(5):
         r = requests.get(f"https://www.reddit.com/r/{sub}/top/.rss", params={"t": TOP_WINDOW, "limit": 100},
-                         headers={"User-Agent": "windows:reelbot:0.1"}, timeout=30)
+                         headers={"User-Agent": "windows:slopcannon:0.1"}, timeout=30)
         if r.status_code != 429 and r.text:
             break
         time.sleep(30)  # ponytail: unauthenticated RSS is rate-limited hard; fine for a few runs a day
@@ -698,7 +698,7 @@ def mockingbird(tool: str, args: dict) -> str:
         raise RuntimeError("mockingbird exited without answering")
     try:
         send({"id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {},
-                                                          "clientInfo": {"name": "reelbot", "version": "1"}}})
+                                                          "clientInfo": {"name": "slopcannon", "version": "1"}}})
         reply(1)
         send({"method": "notifications/initialized"})
         send({"id": 2, "method": "tools/call", "params": {"name": tool, "arguments": args}})
@@ -969,7 +969,7 @@ def login(site: str):
                                  os.environ["TIKTOK_REDIRECT_URI"])
         url = "https://www.tiktok.com/v2/auth/authorize/?" + urllib.parse.urlencode({
             "client_key": cid, "redirect_uri": redirect, "response_type": "code", "scope": "video.publish",
-            "state": "reelbot"})
+            "state": "slopcannon"})
     else:
         sys.exit("--login youtube or --login tiktok")
     print(f"Open this, approve, then copy the address you land on:\n{url}\n")
@@ -1009,7 +1009,7 @@ def main():
         return login((sys.argv[sys.argv.index("--login") + 1:] or [""])[0])
     demo, dry, reddit, book = (a in sys.argv for a in ("--demo", "--dry-run", "--reddit", "--book"))
     if not (demo or dry or ready()):  # don't spend 20 minutes building a reel with nowhere to post it
-        sys.exit("posted nowhere: set up at least one platform (see the top of reelbot.py)")
+        sys.exit("posted nowhere: set up at least one platform (see the top of slopcannon.py)")
     hist_file = HERE / ("reddit_history.json" if reddit else "book_history.json" if book else "history.json")
     history = json.loads(hist_file.read_text()) if hist_file.exists() else []
     out = HERE / "out" / time.strftime("%Y-%m-%d_%H%M%S")
@@ -1055,7 +1055,7 @@ def main():
         return
     ids = publish(video, caption)
     if not ids:
-        sys.exit("posted nowhere: set up at least one platform (see the top of reelbot.py)")
+        sys.exit("posted nowhere: set up at least one platform (see the top of slopcannon.py)")
     hist_file.write_text(json.dumps(history + [key], indent=1))
     POSTS.write_text(json.dumps(posts() + [{"what": what, "at": time.time(), "ids": ids, **extra}], indent=1), encoding="utf-8")
 

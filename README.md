@@ -1,19 +1,19 @@
-<p align="center"><img src="logo.svg" width="128" alt="reelbot logo"></p>
+<p align="center"><img src="logo.svg" width="128" alt="slopcannon logo"></p>
 
-<h1 align="center">reelbot</h1>
+<h1 align="center">slopcannon</h1>
 
 <p align="center">Makes short vertical videos and posts them to Instagram, Facebook, YouTube Shorts and TikTok on a schedule.</p>
 
-reelbot is one Python script, `reelbot.py`. Claude writes the script for each reel through the Claude Code CLI, so you need no API key. Every reel is labelled as AI-generated wherever the platform's API allows it.
+slopcannon is one Python script, `slopcannon.py`. Claude writes the script for each reel through the Claude Code CLI, so you need no API key. Every reel is labelled as AI-generated wherever the platform's API allows it.
 
 ## What it makes
 
 | Mode | Command | What you get |
 |---|---|---|
-| Trivia | `python reelbot.py` | An infographic reel of surprising facts, narrated with Edge TTS. |
-| Reddit stories | `python reelbot.py --reddit` | A popular drama or revenge post retold in Claude's own words over gameplay footage from `bg/`. It is credited "Based on a story by u/… on r/…". |
-| Classic books | `python reelbot.py --book` or `--book "White Nights"` | A story reel in the style of TED-Ed about a public-domain classic. It has flat-vector art from Cloudflare Workers AI (Pollinations if Cloudflare isn't set up), a Kokoro narrator that matches the story's mood (sombre, eerie, tense, tender or wry), ambience for the setting (rain, snow, mist, embers or dust), and a motion layer drawn by mockingbird (`book_motion.html`). The final mix is levelled to −14 LUFS. |
-| Test | `python reelbot.py --demo` | A built-in trivia sample. It makes no API calls and posts nothing. |
+| Trivia | `python slopcannon.py` | An infographic reel of surprising facts, narrated with Edge TTS. |
+| Reddit stories | `python slopcannon.py --reddit` | A popular drama or revenge post retold in Claude's own words over gameplay footage from `bg/`. It is credited "Based on a story by u/… on r/…". |
+| Classic books | `python slopcannon.py --book` or `--book "White Nights"` | A story reel in the style of TED-Ed about a public-domain classic. It has flat-vector art from Cloudflare Workers AI (Pollinations if Cloudflare isn't set up), a Kokoro narrator that matches the story's mood (sombre, eerie, tense, tender or wry), ambience for the setting (rain, snow, mist, embers or dust), and a motion layer drawn by mockingbird (`book_motion.html`). The final mix is levelled to −14 LUFS. |
+| Test | `python slopcannon.py --demo` | A built-in trivia sample. It makes no API calls and posts nothing. |
 
 Add `--dry-run` to build a reel without posting it. Finished reels go to `out/<date_time>/reel.mp4`.
 
@@ -39,9 +39,9 @@ Each page (account) has its own settings file. To set one up, copy `page.env.exa
 
 | Platform | Settings | One-time step |
 |---|---|---|
-| Instagram and Facebook | `IG_USER_ID`, `IG_TOKEN`, `FB_PAGE_ID`, `FB_PAGE_TOKEN` | Run `python reelbot.py --meta` with a Meta system user token. It prints all four values for each of your Pages. |
-| YouTube | `YT_CLIENT_ID`, `YT_CLIENT_SECRET` (a Desktop OAuth client) | `python reelbot.py --env books.env --login youtube` |
-| TikTok | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REDIRECT_URI` | `python reelbot.py --env books.env --login tiktok`. Posts stay private (`TIKTOK_PRIVACY=SELF_ONLY`) until TikTok audits the app. |
+| Instagram and Facebook | `IG_USER_ID`, `IG_TOKEN`, `FB_PAGE_ID`, `FB_PAGE_TOKEN` | Run `python slopcannon.py --meta` with a Meta system user token. It prints all four values for each of your Pages. |
+| YouTube | `YT_CLIENT_ID`, `YT_CLIENT_SECRET` (a Desktop OAuth client) | `python slopcannon.py --env books.env --login youtube` |
+| TikTok | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REDIRECT_URI` | `python slopcannon.py --env books.env --login tiktok`. Posts stay private (`TIKTOK_PRIVACY=SELF_ONLY`) until TikTok audits the app. |
 | Book art | `CF_ACCOUNT_ID`, `CF_API_TOKEN` (the Workers AI token template) | None |
 
 A platform with missing settings is skipped. If one platform fails, the others still post.
@@ -54,14 +54,14 @@ Run `schedule.ps1` once, in PowerShell, to register two Windows Task Scheduler j
 
 | Task | Command | Times |
 |---|---|---|
-| `reelbot books` | `--book --env books.env` | 10:40 and 18:40 |
-| `reelbot stories` | `--reddit --env stories.env` | 12:55 and 20:55 |
+| `slopcannon books` | `--book --env books.env` | 10:40 and 18:40 |
+| `slopcannon stories` | `--reddit --env stories.env` | 12:55 and 20:55 |
 
 Each job catches up after the PC was asleep, wakes the PC to run, and retries twice. Output goes to `logs/<page>.log`.
 
 ## Learning from views
 
-Every posted reel is logged. Before each run, reelbot pulls Instagram's views, reach, shares, saves and average watch time for reels posted 1 to 30 days ago. It tells Claude which reels did best and worst before Claude picks the next topic.
+Every posted reel is logged. Before each run, slopcannon pulls Instagram's views, reach, shares, saves and average watch time for reels posted 1 to 30 days ago. It tells Claude which reels did best and worst before Claude picks the next topic.
 
 ## Promo reels for Mitu
 
