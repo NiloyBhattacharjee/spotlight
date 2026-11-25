@@ -15,8 +15,10 @@
       /** scp: its number, cls: object class, lines: [{ text, at, end }] the narration with when it's spoken,
        *  stamps: [{ text, at, out }] the pop-up captions, art: [{ at, end, paths: [svg d], fills: [svg d] }] the
        *  drawings, each in a 1000 x 1000 box. */
-      const { scp: SCP, cls: CLS, lines: LINES, stamps: STAMPS, art: ART } =
-        /*CONFIG*/{ scp: "SCP-552", cls: "Safe", stamps: [{ text: "He sees what hasn't happened yet", at: 3.6, out: 6.4 }],
+      //  intro: when the archive's title card hands over to the recording, end: when the recording stops and its
+      //  sign-off card comes up.
+      const { scp: SCP, cls: CLS, lines: LINES, stamps: STAMPS, art: ART, intro: INTRO, end: REC_END } =
+        /*CONFIG*/{ scp: "SCP-552", cls: "Safe", intro: 0, end: 7, stamps: [{ text: "He sees what hasn't happened yet", at: 3.6, out: 6.4 }],
                    lines: [{ text: "The TV in his room only plays old footage of that same room.", at: 0.3, end: 3.4 }],
                    art: [{ at: 0, end: 7, fills: ["M480 420a20 20 0 1 0 40 0a20 20 0 1 0-40 0"],
                            paths: ["M300 300h400v300H300z", "M350 650l-50 150M650 650l50 150", "M500 300C420 200 580 160 500 80"] }] };
@@ -38,6 +40,7 @@
         ...LINES.map((l) => [l.at, 0.22, 0.25]),
         ...STAMPS.map((s) => [s.at, 1, 0.7]),
         ...ART.map((a) => [a.at, 0.85, 0.55]),
+        [0, 0.9, 0.5], [INTRO, 0.9, 0.45], [REC_END, 1, 0.6],  // the tape catching as each card comes and goes
         ...Array.from({ length: Math.ceil(END / 2.5) }, (_, i) => [hash(SEED + i) * END, 0.25 + 0.5 * hash(SEED + i + 99), 0.12 + 0.2 * hash(i + 7)]),
       ];
       const glitch = (t) => KICKS.reduce((g, [at, amt, dur]) => (t >= at && t < at + dur ? Math.max(g, amt * (1 - (t - at) / dur)) : g), 0.05);
@@ -133,6 +136,41 @@
         }
       }
 
+      // The archive's seal: two rings and three arrows pointing in.
+      function seal(c, x, y, r, u) {
+        c.save();
+        c.translate(x, y);
+        c.strokeStyle = "#fff";
+        c.lineCap = c.lineJoin = "round";
+        c.lineWidth = 7 * u;
+        c.beginPath(); c.arc(0, 0, r, 0, 2 * Math.PI); c.stroke();
+        c.lineWidth = 18 * u;
+        c.beginPath(); c.arc(0, 0, r * 0.55, 0, 2 * Math.PI); c.stroke();
+        for (let k = 0; k < 3; k++) {
+          c.rotate((2 * Math.PI) / 3);
+          c.lineWidth = 16 * u;
+          c.beginPath(); c.moveTo(0, -r * 0.92); c.lineTo(0, -r * 0.66); c.stroke();
+          c.beginPath(); c.moveTo(-r * 0.13, -r * 0.8); c.lineTo(0, -r * 0.64); c.lineTo(r * 0.13, -r * 0.8); c.stroke();
+        }
+        c.restore();
+      }
+
+      // A card from the archive, from `at`: the seal, then its rows typed in. rows: [text, size, y, alpha]
+      function card(c, t, at, rows, W, H, u) {
+        seal(c, W / 2, H * 0.3, 170 * u, u);
+        c.textAlign = "center";
+        c.textBaseline = "middle";
+        c.fillStyle = "#fff";
+        let n = Math.floor((t - at - 0.15) * 70);
+        for (const [text, size, y, alpha] of rows) {
+          c.font = `700 ${size * u}px ${MONO}`;
+          c.globalAlpha = alpha;
+          c.fillText(text.slice(0, Math.max(0, n)), W / 2, H * y);
+          n -= text.length;
+        }
+        c.globalAlpha = 1;
+      }
+
       function draw(ctx, t, m) {
         const W = m.width, H = m.height, u = Math.min(W, H) / 1080, g = glitch(t);
         ctx.fillStyle = "#040504";
@@ -141,12 +179,19 @@
         // everything white goes on one layer, then onto the frame through the tape
         const src = layer("src", W, H), s = src.getContext("2d");
         s.reset();
+        const TAPE = `TAPE ${String(SEED % 90 + 10)}`;
+        if (t < INTRO)
+          card(s, t, 0, [["FOUNDATION ARCHIVES", 66, 0.5, 1], ["RECOVERED AUDIO RECORDING", 38, 0.555, 0.8],
+                         [SCP, 96, 0.64, 1], [`${TAPE}  ·  ${CLS.toUpperCase()}`, 36, 0.71, 0.7]], W, H, u);
+        else if (t >= REC_END)
+          card(s, t, REC_END, [["END OF RECORDING", 66, 0.5, 1], [`${SCP}  ·  FILE SEALED`, 38, 0.555, 0.8],
+                               ["RETURN THIS TAPE TO THE ARCHIVES", 32, 0.62, 0.6]], W, H, u);
         const a = DRAWINGS.findLast((d) => d.at <= t + 0.01);
         if (a && t < a.end) {
           drawing(s, a, t - 0.4, W, H, u, 0.22, 0.07);  // its ghost, a moment behind and a little bigger
           drawing(s, a, t, W, H, u, 1, 0);
         }
-        const rows = subtitle(s, t, W, H, u);
+        const rows = t < REC_END ? subtitle(s, t, W, H, u) : [];
         s.font = `700 ${SIZE * u}px ${MONO}`;
         s.fillStyle = "#fff";
         s.textAlign = "center";
@@ -162,13 +207,13 @@
         s.font = `700 ${36 * u}px ${MONO}`;
         s.textAlign = "left";
         s.globalAlpha = 0.85;
-        s.fillText(t < 3 && Math.floor(t * 2) % 2 ? "" : t < 3 ? "PLAY ▶" : "▶ SP", 60 * u, 90 * u);
+        s.fillText(t >= REC_END ? "■ STOP" : t < 3 && Math.floor(t * 2) % 2 ? "" : t < 3 ? "PLAY ▶" : "▶ SP", 60 * u, 90 * u);
         s.fillText(`${SCP}  /  ${CLS.toUpperCase()}`, 60 * u, 140 * u);
         if (g > 0.45) s.fillText(`TRACKING ${"▮".repeat(1 + Math.floor(hash(Math.floor(t * 12)) * 9))}`, 60 * u, H - 150 * u);
         s.textAlign = "right";
         const sec = Math.floor(t);
         s.fillText(`0:${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`, W - 60 * u, 90 * u);
-        s.fillText(`TAPE ${String(SEED % 90 + 10)}`, W - 60 * u, 140 * u);
+        s.fillText(TAPE, W - 60 * u, 140 * u);
         s.globalAlpha = 1;
         tape(ctx, src, W, H, u, g, t);
 
@@ -225,6 +270,7 @@
       }
 
       const audio = () => [
+        { path: sfx("click"), at: 0.05, volume: 0.6 }, { path: sfx("click"), at: REC_END, volume: 0.6 },  // the deck: play, stop
         ...STAMPS.map((s) => ({ path: sfx("impact"), at: s.at, volume: 0.45 })),
         ...ART.map((a) => ({ path: sfx("whoosh"), at: Math.max(0, a.at - 0.15), volume: 0.2 })),
       ];

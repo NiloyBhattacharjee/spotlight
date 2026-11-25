@@ -105,6 +105,7 @@ SCP_VOICE = HERE / "scp_voice.wav"  # the narrator Chatterbox copies
 SCP_GLITCH = 0  # how often a line's tape goes wrong (a stutter, dropout, crackle or skip): 0 keeps the voice straight
 # the narrator as recorded, no pitching or tape effects, so they sound like a real person: just a small, quiet room
 SCP_FX = f"highpass=f=80,aecho=0.8:0.5:35:0.07,{VOICE_FX}"
+SCP_INTRO, SCP_OUTRO = 2.0, 3.0  # seconds of the archive's title card before the recording, and its sign-off after
 SCP_DATA = "https://scp-data.tedivm.com/data/scp/items/"  # every SCP article with its author, from the wiki (CC BY-SA 3.0)
 SCP_CACHE = HERE / "scp_cache"
 KOKORO_VOICE = "am_onyx"  # deep American male; also try am_fenrir, bm_lewis or bm_george (b = British)
@@ -1104,10 +1105,10 @@ def mockingbird(tool: str, args: dict) -> str:
 def scp_motion(video: Path, scp: str, cls: str, lines: list[str], pops: list[str], art: list[Drawing]) -> Path:
     """Redraw a voiced SCP reel as a recovered VHS tape (scp_motion.html): Claude's drawings of the thing traced
     on black, each for its share of the lines, each line typed as a subtitle as it's spoken, the pop-up captions
-    flashed in red, all tearing and glitching. build() voiced each line into its own clip, so the clips' lengths
-    give the timings."""
+    flashed in red, all tearing and glitching, between the archive's title card and its sign-off. build() voiced
+    each line into its own clip, so the clips' lengths give the timings."""
     out = video.parent
-    t, timed = 0.0, []
+    t, timed = SCP_INTRO, []
     for i, text in enumerate(lines):
         spoken = 0.85 * duration(out / f"{i}.wav")  # ponytail: a paragraph's last line ends in its pause; typing a bit early reads fine
         timed.append({"text": re.sub(UNSPOKEN, " ", text).strip(), "at": round(t, 2),
@@ -1119,12 +1120,15 @@ def scp_motion(video: Path, scp: str, cls: str, lines: list[str], pops: list[str
         stamps.append({"text": p, "at": round(at, 2), "out": round(at + 3.2, 2)})
     starts = [timed[k * len(timed) // len(art)]["at"] for k in range(len(art))] + [t]
     drawn = [{"at": starts[k], "end": starts[k + 1], "paths": d.paths, "fills": d.fills} for k, d in enumerate(art)]
-    config = {"scp": scp, "cls": cls, "lines": timed, "stamps": stamps, "art": drawn}
+    config = {"scp": scp, "cls": cls, "lines": timed, "stamps": stamps, "art": drawn, "intro": SCP_INTRO,
+              "end": round(t, 2)}
     page = (HERE / "scp_motion.html").read_text(encoding="utf-8")
     (out / "motion.html").write_text(page.replace("/*CONFIG*/{", f"{json.dumps(config, ensure_ascii=False)} || {{", 1),
                                      encoding="utf-8")
-    base = out / "base.mp4"
-    video.replace(base)
+    base = out / "base.mp4"  # the voiced reel with silence before and after it for the two cards
+    run("-i", video, "-vf", f"tpad=start_duration={SCP_INTRO}:stop_duration={SCP_OUTRO}",
+        "-af", f"adelay={int(SCP_INTRO * 1000)}:all=1,apad=pad_dur={SCP_OUTRO}", "-c:a", "aac", base)
+    video.unlink()
     mockingbird("motion", {"script": str(out / "motion.html"), "path": str(base), "fps": 30, "out": str(video)})
     return video
 
