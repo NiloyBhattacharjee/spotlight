@@ -18,7 +18,8 @@ Posting goes to every platform that is set up (env vars; one failing doesn't sto
   python slopcannon.py --variety "RED FLAGS"   the same, in a format you choose (any key of VARIETY)
   python slopcannon.py --scp        a random SCP Foundation article (rated 100+) narrated by a gloomy local voice, posted
   python slopcannon.py --scp SCP-173   the same, for an SCP you choose
-    --scp voices with Chatterbox (local, expressive) once set up, else Kokoro. Chatterbox copies scp_voice.wav, made
+    --scp draws a case file on a desk (scp_motion.html, look scp_look/look.ts) with mockingbird when installed,
+    else plain cards. It voices with Chatterbox (local, expressive) once set up, else Kokoro. Chatterbox copies scp_voice.wav, made
     once with Kokoro; swap in any 10 s clip of a voice you like. Needs Python 3.10-3.12:
       py -3.11 -m venv .venv-chatterbox
       .venv-chatterbox/Scripts/pip install chatterbox-tts
@@ -685,14 +686,20 @@ import json, os, re, sys, torch, torchaudio
 from chatterbox.tts import ChatterboxTTS
 torch.set_num_threads(max(1, (os.cpu_count() or 2) // 2))  # physical cores
 model = ChatterboxTTS.from_pretrained(device="cpu")
-ref, gap = sys.argv[1], torch.zeros(1, int(model.sr * 0.9))
+ref, gap = sys.argv[1], torch.zeros(1, int(model.sr * 0.6))
+
+def trim(a):  # Chatterbox's own silence at each end, keeping 40 ms
+    loud = (a.abs() > 0.02 * a.abs().max()).nonzero()
+    pad = int(model.sr * 0.04)
+    return a[:, max(0, int(loud[0, 1]) - pad):int(loud[-1, 1]) + pad] if len(loud) else a
+
 for text, path in json.load(sys.stdin):
     parts = []
     for k, bit in enumerate(re.split(r"\\(pause\\)", text)):
         if k:
             parts.append(gap)
-        if bit.strip():  # exaggeration up = more emotion; cfg_weight down = slower, heavier pacing
-            parts.append(model.generate(bit.strip(), audio_prompt_path=ref, exaggeration=0.65, cfg_weight=0.3))
+        if bit.strip():  # exaggeration up = more emotion; cfg_weight 0.5 = its natural pace, not dragged out
+            parts.append(trim(model.generate(bit.strip(), audio_prompt_path=ref, exaggeration=0.6, cfg_weight=0.5)))
     torchaudio.save(path, torch.cat(parts, 1), model.sr)
 """
 
@@ -916,6 +923,32 @@ def mockingbird(tool: str, args: dict) -> str:
     if "error" in r or r["result"].get("isError"):
         raise RuntimeError(f"mockingbird {tool} failed: {r.get('error') or text}")
     return text
+
+
+def scp_motion(video: Path, scp: str, cls: str, lines: list[str], pops: list[str]) -> Path:
+    """Redraw a voiced SCP reel as a case file in the approved "On the desk" look (scp_motion.html with
+    scp_look/look.ts): each line typed as it's spoken, the pop-up captions stamped across the middle of the reel.
+    build() voiced each line into its own clip, so the clips' lengths give the timings."""
+    out = video.parent
+    t, timed = 0.0, []
+    for i, text in enumerate(lines):
+        spoken = duration(out / f"{i}.wav") - 0.6 * text.count("(pause)")  # Chatterbox's pause gap
+        timed.append({"text": re.sub(r"\s*\(pause\)\s*", " ", text).strip(), "at": round(t, 2),
+                      "end": round(t + max(spoken, 0.3), 2)})
+        t += duration(out / f"{i}.mp4")
+    stamps = []
+    for k, p in enumerate(pops):  # spread through the reel, each on a line start, never on the hook
+        at = timed[min(len(timed) - 1, int((k + 0.5) * len(timed) / len(pops)))]["at"] + 0.6
+        stamps.append({"text": p, "at": round(at, 2), "out": round(at + 3.2, 2)})
+    config = {"scp": scp, "cls": cls, "lines": timed, "stamps": stamps}
+    page = (HERE / "scp_motion.html").read_text(encoding="utf-8")
+    page = page.replace("file:///LOOK.look.js", (HERE / "scp_look" / "look.look.js").as_uri())
+    (out / "motion.html").write_text(page.replace("/*CONFIG*/{", f"{json.dumps(config, ensure_ascii=False)} || {{", 1),
+                                     encoding="utf-8")
+    base = out / "base.mp4"
+    video.replace(base)
+    mockingbird("motion", {"script": str(out / "motion.html"), "path": str(base), "fps": 30, "out": str(video)})
+    return video
 
 
 def build_film(film: Film, out: Path, pause=0.35, fade=0.6) -> Path:
@@ -1274,8 +1307,10 @@ def main():
         fx = f"rubberband=pitch={eerie['pitch']}:formant=preserved,aecho=0.85:0.5:45|90:0.15|0.1,{VOICE_FX}"
         tts = chatterbox if CHATTERBOX_PY.exists() else (  # Kokoro would read "(pause)" aloud: make it a long rest
             lambda items: kokoro([(t.replace("(pause)", "..."), p) for t, p in items], "eerie"))
-        video = build(slides, caption, out, pause=0.3, tts=tts, fx=fx)
+        video = build(slides, caption, out, pause=0.12, tts=tts, fx=fx)
         (out / "script.json").write_text(s.model_dump_json(indent=1), encoding="utf-8")
+        if MOCKINGBIRD.exists():  # else the plain cards build() drew stay as the picture
+            video = scp_motion(video, key, s.object_class, lines, s.on_screen)
         add_music(video, "dust", bed=dread)
     elif variety:
         recent = [p.get("format") for p in posts()[-2:]]

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /></head>
+  <body style="margin: 0">
+    <script type="module">
+      // What slopcannon --scp draws each SCP reel as, with mockingbird's `motion`, in the "On the desk" look
+      // (scp_look/look.ts): the file's header typed in and its containment procedures redacted, each spoken line
+      // struck letter by letter in time with the voice, a fresh sheet when one fills, and the pop-up captions
+      // stamped in red. A typewriter click starts each line and a thud lands each stamp.
+      // slopcannon fills CONFIG and the look's path for each reel.
+      import { hash, page, sfx } from "KIT";
+      import look from "file:///LOOK.look.js";
+
+      // ---- settings --------------------------------------------------------
+      /** scp: its number, cls: object class, lines: [{ text, at, end }] the narration with when it's spoken,
+       *  stamps: [{ text, at, out }] the pop-up captions. */
+      const { scp: SCP, cls: CLS, lines: LINES, stamps: STAMPS } =
+        /*CONFIG*/{ scp: "SCP-552", cls: "Safe", stamps: [{ text: "He sees what hasn't happened yet", at: 3.6, out: 6.4 }],
+                   lines: [{ text: "The TV in his room only plays old footage of that same room.", at: 0.3, end: 3.4 }] };
+      const SIZE = 62;          // narration type, in units
+      const TOP = 0.34;         // where a sheet's first line goes
+      const ROWS = 10;          // rows that fit above the stamp
+      const PER_ROW = 21;       // characters a row holds at SIZE, about
+      // ----------------------------------------------------------------------
+
+      // Which sheet each line is typed on: a new one when the line wouldn't fit under the ones before it.
+      let rows = 0, sheet = 0;
+      const PLAN = LINES.map((l) => {
+        const need = Math.ceil(l.text.length / PER_ROW);
+        if (rows && rows + need > ROWS) { sheet++; rows = 0; }
+        rows += need;
+        return { ...l, sheet };
+      });
+      const sheetAt = (t) => PLAN.reduce((s, l) => (l.at - 0.05 <= t ? l.sheet : s), 0);
+
+      function draw(ctx, t, m) {
+        const l = look.make(ctx, t, m);
+        const now = sheetAt(t);
+        const h = now === 0 ? 0 : -10;  // the first sheet types its header in; later ones arrive filled
+        l.surface();
+        l.title(SCP, { at: h, dur: 0.35 });
+        l.node(0.9, 0.12, 22, { at: h + 0.3 });
+        l.label(`Object class: ${CLS}`, 0.1, 0.165, { at: h + 0.4, tone: "accent" });
+        if (now > 0) l.label(`Page ${now + 1}`, 0.72, 0.165, { at: h, tone: "muted", size: 30 });
+        l.label("Special containment procedures:", 0.1, 0.215, { at: h + 0.8, size: 30, tone: "muted" });
+        l.redact(0.1, 0.25, 0.62, { at: h + 1.1, size: 34 });
+        l.redact(0.1, 0.28, 0.44, { at: h + 1.25, size: 34 });
+
+        let y = TOP;
+        for (const line of PLAN) {
+          if (line.sheet !== now || line.at - 0.05 > t) continue;
+          y = l.line(line.text, 0.1, y, { at: line.at, end: line.end, size: SIZE, w: 0.8 }) + 0.012;
+        }
+        STAMPS.forEach((s, i) => {
+          if (t >= s.at && t < s.out) l.stamp(s.text, 0.5, 0.87, { at: s.at, out: s.out, size: 60, angle: (hash(i + 4) - 0.5) * 0.14 });
+        });
+        l.finish();
+      }
+
+      const audio = () => [
+        ...LINES.map((s) => ({ path: sfx("click"), at: s.at, volume: 0.3 })),
+        ...STAMPS.map((s) => ({ path: sfx("impact"), at: s.at + 0.28, volume: 0.5 })),
+      ];
+
+      page(draw, { audio });
+    </script>
+  </body>
+</html>
