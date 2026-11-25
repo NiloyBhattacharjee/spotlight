@@ -102,9 +102,11 @@ ORPHEUS_SERVER = ORPHEUS / "llama" / "llama-server.exe"
 ORPHEUS_MODEL = ORPHEUS / "Orpheus-3b-FT-Q8_0.gguf"
 ORPHEUS_VOICE = "leo"  # its male voices: leo (the most shaken-sounding), zac (deepest, flattest), dan (also tara, leah, jess, mia, zoe)
 SCP_VOICE = HERE / "scp_voice.wav"  # the narrator Chatterbox copies
-SCP_GLITCH = 0  # how often a line's tape goes wrong (a stutter, dropout, crackle or skip): 0 keeps the voice straight
-# the narrator as recorded, no pitching or tape effects, so they sound like a real person: just a small, quiet room
-SCP_FX = f"highpass=f=80,aecho=0.8:0.5:35:0.07,{VOICE_FX}"
+SCP_GLITCH = 0.5  # how often a line's tape goes wrong (a stutter, dropout, crackle or skip): 0 keeps the voice straight
+SCP_SPEED = 0.92  # SCP narration tempo: lower is slower, more worn out (the pitch stays put)
+# the narrator a little slower and a touch lower, tired, but still a real person (formants kept, no tape effects on
+# the voice itself): just a small, quiet room
+SCP_FX = f"rubberband=tempo={SCP_SPEED}:pitch=0.97:formant=preserved,highpass=f=80,aecho=0.8:0.5:35:0.07,{VOICE_FX}"
 SCP_INTRO, SCP_OUTRO = 2.0, 3.0  # seconds of the archive's title card before the recording, and its sign-off after
 SCP_DATA = "https://scp-data.tedivm.com/data/scp/items/"  # every SCP article with its author, from the wiki (CC BY-SA 3.0)
 SCP_CACHE = HERE / "scp_cache"
@@ -208,13 +210,14 @@ Pick ONE narrator and stay in them:
 - someone outside the Foundation who saw it once and was told to forget
 Put the narrator you picked in "voice", then never mention it in the script.
 First person, past tense ("I remember...", "We used to...", "By the third week..."). This is a real person who
-went through something terrible and never got over it. They are still scared, and it shows: they have trouble
-getting the words out, they stop and start again, they skip past the worst part and then make themselves come
-back to it. Some of it they've never told anyone. Nothing performed, nothing shouted, no exclamation marks, no
-spooky-storyteller voice: the fear is in how hard it is for them to say it plainly. No question marks: even a
-question comes out flat, as a statement with a full stop. Write it the way a shaken person actually talks: an
-"um", an "I... I" where they falter, a sentence they abandon halfway, a word said twice, a short "sorry" when
-they lose it for a second, a small detail they can't stop seeing.
+went through something terrible and never got over it. Years of it have worn them down: they are exhausted and
+sad, grieving the people they lost, with the fear still underneath. They have trouble getting the words out,
+they trail off ("and then... yeah."), stop and start again, skip past the worst part and then make themselves
+come back to it. Some of it they've never told anyone. Nothing performed, nothing shouted, no exclamation marks,
+no spooky-storyteller voice: the sadness is in how tired they sound saying it plainly. No question marks: even a
+question comes out flat, as a statement with a full stop. Write it the way a broken, tired person actually
+talks: an "um", an "I... I" where they falter, a sentence they abandon halfway, a word said twice, a short
+"sorry" when they lose it for a second, a small detail they can't stop seeing.
 
 HOW IT SHOULD SOUND
 - Like a real person talking, not a writer showing off. Short sentences mixed with the odd longer one. Some fragments are fine.
@@ -223,8 +226,8 @@ HOW IT SHOULD SOUND
 - Let the creepy part come from facts, not adjectives. Don't tell the viewer it's scary.
 - Leave some things unexplained. Don't wrap it up neatly.
 - It's fine to have a dry or dark joke if the voice fits.
-- The narrator's voice can break: write <sigh>, <sniffle>, <gasp>, <groan> or <cough> where a memory gets to
-  them, at most four in the script, at the start or end of a line.
+- The narrator's voice can break: write <sigh> (most often: they're worn out), <sniffle>, <gasp>, <groan> or
+  <cough> where a memory gets to them, at most five in the script, at the start or end of a line.
 
 OPENING (first 3 seconds, this matters most)
 Start mid-thought or with a concrete detail. Pick a hook type you haven't used recently and put it in "hook_type":
@@ -1110,7 +1113,7 @@ def scp_motion(video: Path, scp: str, cls: str, lines: list[str], pops: list[str
     out = video.parent
     t, timed = SCP_INTRO, []
     for i, text in enumerate(lines):
-        spoken = 0.85 * duration(out / f"{i}.wav")  # ponytail: a paragraph's last line ends in its pause; typing a bit early reads fine
+        spoken = 0.85 * duration(out / f"{i}.wav") / SCP_SPEED  # ponytail: a paragraph's last line ends in its pause; typing a bit early reads fine
         timed.append({"text": re.sub(UNSPOKEN, " ", text).strip(), "at": round(t, 2),
                       "end": round(t + max(spoken, 0.3), 2)})
         t += duration(out / f"{i}.mp4")
