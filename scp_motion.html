@@ -1,65 +1,232 @@
 <!doctype html>
 <html lang="en">
   <head><meta charset="utf-8" /></head>
-  <body style="margin: 0">
+  <body style="margin: 0; background: #000">
     <script type="module">
-      // What slopcannon --scp draws each SCP reel as, with mockingbird's `motion`, in the "On the desk" look
-      // (scp_look/look.ts): the file's header typed in and its containment procedures redacted, each spoken line
-      // struck letter by letter in time with the voice, a fresh sheet when one fills, and the pop-up captions
-      // stamped in red. A typewriter click starts each line and a thud lands each stamp.
-      // slopcannon fills CONFIG and the look's path for each reel.
-      import { hash, page, sfx } from "KIT";
-      import look from "file:///LOOK.look.js";
+      // What slopcannon --scp draws each SCP reel as, with mockingbird's `motion`: a recovered archive tape. On
+      // black, a strange line drawing of the thing (Claude draws them as SVG paths for each reel) is traced in one
+      // stroke at a time, breathes, leaves a ghost behind it and tears sideways with the tape; each spoken line is
+      // typed as a subtitle in time with the voice; the pop-up captions flash in red. A tape counter, scanlines,
+      // static, a tracking band rolling down and head-switch noise at the bottom over everything.
+      // slopcannon fills CONFIG for each reel.
+      import { clamp, hash, noise, page, sfx } from "KIT";
 
       // ---- settings --------------------------------------------------------
       /** scp: its number, cls: object class, lines: [{ text, at, end }] the narration with when it's spoken,
-       *  stamps: [{ text, at, out }] the pop-up captions. */
-      const { scp: SCP, cls: CLS, lines: LINES, stamps: STAMPS } =
+       *  stamps: [{ text, at, out }] the pop-up captions, art: [{ at, end, paths: [svg d], fills: [svg d] }] the
+       *  drawings, each in a 1000 x 1000 box. */
+      const { scp: SCP, cls: CLS, lines: LINES, stamps: STAMPS, art: ART } =
         /*CONFIG*/{ scp: "SCP-552", cls: "Safe", stamps: [{ text: "He sees what hasn't happened yet", at: 3.6, out: 6.4 }],
-                   lines: [{ text: "The TV in his room only plays old footage of that same room.", at: 0.3, end: 3.4 }] };
-      const SIZE = 62;          // narration type, in units
-      const TOP = 0.34;         // where a sheet's first line goes
-      const ROWS = 10;          // rows that fit above the stamp
-      const PER_ROW = 21;       // characters a row holds at SIZE, about
+                   lines: [{ text: "The TV in his room only plays old footage of that same room.", at: 0.3, end: 3.4 }],
+                   art: [{ at: 0, end: 7, fills: ["M480 420a20 20 0 1 0 40 0a20 20 0 1 0-40 0"],
+                           paths: ["M300 300h400v300H300z", "M350 650l-50 150M650 650l50 150", "M500 300C420 200 580 160 500 80"] }] };
+      const INK = "#dfe8d6", RED = "#ff2b2b";
+      const MONO = '"Courier New", Courier, monospace';
+      const SIZE = 50;          // subtitle type, in units
+      const SUB_Y = 0.75;       // where the subtitle's first row sits
+      const ART_Y = 0.42;       // the drawing's centre
       // ----------------------------------------------------------------------
 
-      // Which sheet each line is typed on: a new one when the line wouldn't fit under the ones before it.
-      let rows = 0, sheet = 0;
-      const PLAN = LINES.map((l) => {
-        const need = Math.ceil(l.text.length / PER_ROW);
-        if (rows && rows + need > ROWS) { sheet++; rows = 0; }
-        rows += need;
-        return { ...l, sheet };
-      });
-      const sheetAt = (t) => PLAN.reduce((s, l) => (l.at - 0.05 <= t ? l.sheet : s), 0);
+      const SEED = [...SCP].reduce((s, c) => s + c.charCodeAt(0), 0);
+      const END = Math.max(10, ...LINES.map((l) => l.end), ...STAMPS.map((s) => s.out));
+      const p2d = (d) => { try { return new Path2D(d); } catch { return null; } };
+      const DRAWINGS = ART.map((a) => ({ ...a, paths: a.paths.map(p2d).filter(Boolean), fills: (a.fills || []).map(p2d).filter(Boolean) }));
+
+      // How hard the tape is glitching at t: a kick on each line, a hit on each stamp and each new drawing, and
+      // dropouts scattered through it.
+      const KICKS = [
+        ...LINES.map((l) => [l.at, 0.22, 0.25]),
+        ...STAMPS.map((s) => [s.at, 1, 0.7]),
+        ...ART.map((a) => [a.at, 0.85, 0.55]),
+        ...Array.from({ length: Math.ceil(END / 2.5) }, (_, i) => [hash(SEED + i) * END, 0.25 + 0.5 * hash(SEED + i + 99), 0.12 + 0.2 * hash(i + 7)]),
+      ];
+      const glitch = (t) => KICKS.reduce((g, [at, amt, dur]) => (t >= at && t < at + dur ? Math.max(g, amt * (1 - (t - at) / dur)) : g), 0.05);
+
+      const cache = (globalThis.__vhs ??= {});
+      const layer = (k, W, H) => (cache[`${k}${W}x${H}`] ??= new OffscreenCanvas(W, H));
+      function staticTile() {  // 512 x 512 of grey noise, made once
+        if (cache.static) return cache.static;
+        const c = new OffscreenCanvas(512, 512), x = c.getContext("2d"), img = x.createImageData(512, 512);
+        for (let i = 0; i < 512 * 512; i++) {
+          const v = 255 * hash(i * 0.7311 + 3.1);
+          img.data.set([v, v, v, 255], i * 4);
+        }
+        x.putImageData(img, 0, 0);
+        return (cache.static = c);
+      }
+
+      // The drawing: strokes traced in one at a time, flickering as they arrive, breathing and drifting after.
+      function drawing(c, a, t, W, H, u, alpha, grow) {
+        t = Math.floor(t * 12) / 12;  // it moves at 12 frames a second, like stop-motion on a cheap camera
+        const p = t - a.at, k = DRAWINGS.indexOf(a);
+        const push = 0.12 * clamp(p / Math.max(1, a.end - a.at));  // a slow push in, the whole time it's up
+        const S = (W * 0.84 / 1000) * (1 + 0.025 * Math.sin(t * 1.1 + k) + grow + push);
+        const out = clamp((a.end - t) / 0.35);
+        c.save();
+        c.translate(W / 2 + noise(t * 0.3, k) * 22 * u, H * ART_Y + noise(t * 0.25, k + 5) * 26 * u);
+        c.rotate(noise(t * 0.12, k + 9) * 0.05);
+        c.scale(S, S);
+        c.translate(-500, -500);
+        c.lineWidth = (3.4 * u) / S;
+        c.lineCap = c.lineJoin = "round";
+        c.strokeStyle = c.fillStyle = "#fff";
+        c.shadowColor = "#fff";
+        c.shadowBlur = 14 * u;
+        const all = [...a.paths.map((x) => [x, false]), ...a.fills.map((x) => [x, true])];
+        const step = Math.min(0.09, 2.2 / Math.max(1, all.length));
+        all.forEach(([path, fill], i) => {
+          const on = p - i * step;
+          if (on < 0) return;
+          const flick = on < 0.3 ? (hash(Math.floor(t * 30) * 1.7 + i) > 0.45 ? 1 : 0.15) : 0.78 + 0.22 * noise(t * 4, i);
+          c.globalAlpha = alpha * flick * out;
+          fill ? c.fill(path) : c.stroke(path);
+        });
+        c.restore();
+      }
+
+      // The subtitle: the line being spoken, typed out as it's said, in rows that fit the frame.
+      function subtitle(c, t, W, H, u) {
+        const line = LINES.findLast((l) => l.at <= t);
+        if (!line) return [];
+        c.font = `700 ${SIZE * u}px ${MONO}`;
+        const n = Math.round(line.text.length * clamp((t - line.at) / Math.max(0.2, line.end - line.at)));
+        const rows = [];
+        for (const w of line.text.split(" ")) {
+          const row = rows.length ? `${rows.at(-1)} ${w}` : w;
+          if (rows.length && c.measureText(row).width < W * 0.84) rows[rows.length - 1] = row;
+          else rows.push(w);
+        }
+        let left = n;
+        return rows.map((r, i) => {
+          const shown = r.slice(0, Math.max(0, left));
+          left -= r.length + 1;
+          return { text: shown + (left < 0 && left > -r.length - 2 && Math.floor(t * 3) % 2 ? "█" : ""), y: H * SUB_Y + i * SIZE * 1.35 * u };
+        });
+      }
+
+      // Draw the white layer onto the frame through the tape: a red and a cyan copy pulled apart, in strips that
+      // tear sideways when the tape glitches.
+      function tape(ctx, src, W, H, u, g, t) {
+        const tint = (color, k) => {
+          const c = layer(k, W, H), x = c.getContext("2d");
+          x.reset();
+          x.filter = `blur(${(1.1 + 3 * g) * u}px)`;  // a tape's soft picture, softer when it glitches
+          x.drawImage(src, 0, 0);
+          x.filter = "none";
+          x.globalCompositeOperation = "source-in";
+          x.fillStyle = color;
+          x.fillRect(0, 0, W, H);
+          return c;
+        };
+        const r = tint("#ff3a3a", "r"), b = tint("#2fe6ff", "b"), w = tint(INK, "w");
+        const split = (2.5 + 26 * g * g) * u, band = Math.round(22 * u), f = Math.floor(t * 30);
+        for (let y = 0; y < H; y += band) {
+          const tear = hash(f * 0.37 + y * 0.013) < g * 0.55 ? (hash(f + y * 0.71) - 0.5) * 220 * u * g : 0;
+          const x = tear + noise(y / H * 7 + t * 0.9, 3) * 3 * u;
+          ctx.globalCompositeOperation = "lighter";
+          ctx.globalAlpha = 0.55;
+          ctx.drawImage(r, 0, y, W, band, x - split, y, W, band);
+          ctx.drawImage(b, 0, y, W, band, x + split, y, W, band);
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = 1;
+          ctx.drawImage(w, 0, y, W, band, x, y, W, band);
+        }
+      }
 
       function draw(ctx, t, m) {
-        const l = look.make(ctx, t, m);
-        const now = sheetAt(t);
-        const h = now === 0 ? 0 : -10;  // the first sheet types its header in; later ones arrive filled
-        l.surface();
-        l.title(SCP, { at: h, dur: 0.35 });
-        l.node(0.9, 0.12, 22, { at: h + 0.3 });
-        l.label(`Object class: ${CLS}`, 0.1, 0.165, { at: h + 0.4, tone: "accent" });
-        if (now > 0) l.label(`Page ${now + 1}`, 0.72, 0.165, { at: h, tone: "muted", size: 30 });
-        l.label("Special containment procedures:", 0.1, 0.215, { at: h + 0.8, size: 30, tone: "muted" });
-        l.redact(0.1, 0.25, 0.62, { at: h + 1.1, size: 34 });
-        l.redact(0.1, 0.28, 0.44, { at: h + 1.25, size: 34 });
+        const W = m.width, H = m.height, u = Math.min(W, H) / 1080, g = glitch(t);
+        ctx.fillStyle = "#040504";
+        ctx.fillRect(0, 0, W, H);
 
-        let y = TOP;
-        for (const line of PLAN) {
-          if (line.sheet !== now || line.at - 0.05 > t) continue;
-          y = l.line(line.text, 0.1, y, { at: line.at, end: line.end, size: SIZE, w: 0.8 }) + 0.012;
+        // everything white goes on one layer, then onto the frame through the tape
+        const src = layer("src", W, H), s = src.getContext("2d");
+        s.reset();
+        const a = DRAWINGS.findLast((d) => d.at <= t + 0.01);
+        if (a && t < a.end) {
+          drawing(s, a, t - 0.4, W, H, u, 0.22, 0.07);  // its ghost, a moment behind and a little bigger
+          drawing(s, a, t, W, H, u, 1, 0);
         }
-        STAMPS.forEach((s, i) => {
-          if (t >= s.at && t < s.out) l.stamp(s.text, 0.5, 0.87, { at: s.at, out: s.out, size: 60, angle: (hash(i + 4) - 0.5) * 0.14 });
-        });
-        l.finish();
+        const rows = subtitle(s, t, W, H, u);
+        s.font = `700 ${SIZE * u}px ${MONO}`;
+        s.fillStyle = "#fff";
+        s.textAlign = "center";
+        s.textBaseline = "middle";
+        ctx.fillStyle = "rgba(0,0,0,0.72)";
+        for (const r of rows) {
+          if (!r.text) continue;
+          const w = s.measureText(r.text).width;
+          ctx.fillRect(W / 2 - w / 2 - 16 * u, r.y - SIZE * 0.62 * u, w + 32 * u, SIZE * 1.24 * u);
+          s.fillText(r.text, W / 2, r.y);
+        }
+        // the deck's on-screen display
+        s.font = `700 ${36 * u}px ${MONO}`;
+        s.textAlign = "left";
+        s.globalAlpha = 0.85;
+        s.fillText(t < 3 && Math.floor(t * 2) % 2 ? "" : t < 3 ? "PLAY ▶" : "▶ SP", 60 * u, 90 * u);
+        s.fillText(`${SCP}  /  ${CLS.toUpperCase()}`, 60 * u, 140 * u);
+        if (g > 0.45) s.fillText(`TRACKING ${"▮".repeat(1 + Math.floor(hash(Math.floor(t * 12)) * 9))}`, 60 * u, H - 150 * u);
+        s.textAlign = "right";
+        const sec = Math.floor(t);
+        s.fillText(`0:${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`, W - 60 * u, 90 * u);
+        s.fillText(`TAPE ${String(SEED % 90 + 10)}`, W - 60 * u, 140 * u);
+        s.globalAlpha = 1;
+        tape(ctx, src, W, H, u, g, t);
+
+        // the pop-up captions, flashed in red across a black bar
+        for (const st of STAMPS) {
+          if (t < st.at || t >= st.out) continue;
+          const p = t - st.at, on = p < 0.35 ? hash(Math.floor(t * 30) + 5) > 0.35 : st.out - t > 0.25 || hash(Math.floor(t * 30)) > 0.5;
+          if (!on) continue;
+          const text = st.text.toUpperCase();
+          let size = 70 * u;
+          ctx.font = `700 ${size}px ${MONO}`;
+          const fit = Math.min(1, (W * 0.88) / ctx.measureText(text).width);
+          size *= fit;
+          ctx.font = `700 ${size}px ${MONO}`;
+          const y = H * 0.64 + (hash(Math.floor(t * 30)) - 0.5) * 10 * u * (p < 0.35);
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, y - size * 0.8, W, size * 1.6);
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillStyle = "#2fe6ff";
+          ctx.globalAlpha = 0.5;
+          ctx.fillText(text, W / 2 + 5 * u, y);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = RED;
+          ctx.fillText(text, W / 2, y);
+        }
+
+        // the tape itself: scanlines, static, a tracking band rolling down, head-switch noise, a dark edge
+        const noiseTile = staticTile(), f = Math.floor(t * 30);
+        ctx.globalCompositeOperation = "screen";
+        ctx.globalAlpha = 0.07 + 0.25 * g;
+        for (let y = -hash(f) * 512; y < H; y += 512 * u)
+          for (let x = -hash(f + 1) * 512; x < W; x += 512 * u) ctx.drawImage(noiseTile, x, y, 512 * u, 512 * u);
+        const by = (((t * 0.06 + hash(SEED)) % 1.25) - 0.12) * H, bh = (50 + 120 * g) * u;
+        ctx.globalAlpha = 0.18 + 0.5 * g;
+        ctx.drawImage(noiseTile, hash(f + 2) * 300, 0, 40, 512, 0, by, W, bh);
+        ctx.globalAlpha = 0.45;
+        ctx.drawImage(noiseTile, 0, hash(f + 3) * 400, 512, 30, -hash(f + 4) * 40 * u, H - 46 * u, W * 1.1, 46 * u);
+        ctx.globalCompositeOperation = "source-over";
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "rgba(0,0,0,0.32)";
+        for (let y = 0; y < H; y += 4 * u) ctx.fillRect(0, y, W, 1.6 * u);
+        const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.75);
+        v.addColorStop(0, "rgba(0,0,0,0)");
+        v.addColorStop(1, "rgba(0,0,0,0.75)");
+        ctx.fillStyle = v;
+        ctx.fillRect(0, 0, W, H);
+        if (g > 0.75 && hash(f * 1.3 + SEED) > 0.55) {  // on the worst glitches, a frame flips to negative
+          ctx.globalCompositeOperation = "difference";
+          ctx.fillStyle = "#e8eee4";
+          ctx.fillRect(0, 0, W, H);
+          ctx.globalCompositeOperation = "source-over";
+        }
       }
 
       const audio = () => [
-        ...LINES.map((s) => ({ path: sfx("click"), at: s.at, volume: 0.3 })),
-        ...STAMPS.map((s) => ({ path: sfx("impact"), at: s.at + 0.28, volume: 0.5 })),
+        ...STAMPS.map((s) => ({ path: sfx("impact"), at: s.at, volume: 0.45 })),
+        ...ART.map((a) => ({ path: sfx("whoosh"), at: Math.max(0, a.at - 0.15), volume: 0.2 })),
       ];
 
       page(draw, { audio });
