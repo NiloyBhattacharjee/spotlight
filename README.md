@@ -15,10 +15,25 @@ Spotlight is one Python script, `spotlight.py`. Claude writes the script for eac
 | SCP lore | `python spotlight.py --scp` or `--scp SCP-173` | A random SCP article rated 100 or more, told as a memory by someone who was there: a retired researcher, a former guard, a surviving D-class. The narrator sounds like a real person, exhausted and sad and still scared of it, on a tape that skips and crackles between words, from Orpheus running locally on the graphics card (Chatterbox, then Kokoro, if it isn't set up), over a synthesized suspense drone with a heartbeat. mockingbird draws it as a recovered VHS tape (`scp_motion.html`): strange line drawings Claude makes of the thing for each reel, traced on black and tearing with the tape, each line typed as a subtitle as it's spoken, and the pop-up captions flashed in red. Without mockingbird it falls back to plain cards. Articles come from the SCP dataset at scp-data.tedivm.com, and every reel credits the author under CC BY-SA 3.0. |
 | Reddit stories | `python spotlight.py --reddit` | A popular drama or revenge post retold in Claude's own words over gameplay footage from `bg/`. It is credited "Based on a story by u/… on r/…". |
 | Classic books | `python spotlight.py --book` or `--book "White Nights"` | A story reel in the style of TED-Ed about a public-domain classic. It has flat-vector art from Cloudflare Workers AI (Pollinations if Cloudflare isn't set up), a Kokoro narrator that matches the story's mood (sombre, eerie, tense, tender or wry), ambience for the setting (rain, snow, mist, embers or dust), and a motion layer drawn by mockingbird (`book_motion.html`). The final mix is levelled to −14 LUFS. |
-| Business promos | `python spotlight.py --brand new mitu <website or file>`, then `--brand mitu` | Promo reels for any business. The first command has Claude draft `brands/mitu.md`, a marketing brief (what it does, who it's for, proof, offers, call to action, tone, colours, what never to say) from its website, a file or a description; you check it once. Each run then picks a format the page hasn't had lately (problem then fix, an acted-out chat, three reasons, one number, before and after, a spotlight, a real review), writes a 20 to 35 second script that claims only what the brief says, and mockingbird draws it in the business's colours (`brand_motion.html`) with captions and an upbeat music bed. Acted-out chats are labelled as dramatised. A business's reels post only to the pages in its own `mitu.env`. |
+| Business promos | `python spotlight.py --brand new mitu <website or file>`, then `--brand mitu` | Promo reels for any business. The first command has Claude draft `brands/mitu.md`, a marketing brief (what it does, who it's for, proof, offers, call to action, tone, colours, what never to say) from its website, a file or a description; you check it once. Each run, a team of agents makes the next reel (see [Marketing agents](#marketing-agents)), and mockingbird draws it in the business's colours (`brand_motion.html`) with no voice: on-screen text over an upbeat music bed, each beat up for as long as it takes to read. Acted-out chats are labelled as dramatised. A business's reels post only to the pages in its own `mitu.env`. |
 | Test | `python spotlight.py --demo` | A built-in trivia sample. It makes no API calls and posts nothing. |
 
 Add `--dry-run` to build a reel without posting it. Finished reels go to `out/<date_time>/reel.mp4`.
+
+## Marketing agents
+
+`--brand` reels are made by agents, each one Claude call with one job, run by an orchestrator (`market()` in `spotlight.py`):
+
+| Agent | Job |
+|---|---|
+| Researcher | Drafts the business's brief from its website, a file or a description (`--brand new`). You check it once. |
+| Strategist | Picks the next reel: a format the page hasn't had lately, an angle it hasn't used, and the viewer's moment it opens on, using how past reels did on Instagram. |
+| Copywriter | Writes the beats and the caption from the plan, using only what the brief says. |
+| Reviewer | Checks every claim against the brief and its "Never say", then whether the hook stops a scroll and each beat reads without sound. It sends the draft back with specific notes until it approves, up to three drafts; if it never does, nothing is made. |
+| Producer | Code, not Claude: makes the music and draws the reel with mockingbird. |
+| Publisher | Code: posts to the business's own pages from its `<name>.env`. |
+
+Each agent's answer is saved to `out/<date_time>/agents.json`, so you can see who decided what.
 
 ## Setup
 

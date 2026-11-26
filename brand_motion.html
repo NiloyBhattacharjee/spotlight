@@ -4,9 +4,9 @@
   <body style="margin: 0">
     <script type="module">
       // What spotlight --brand draws each promo reel as, with mockingbird's `motion`, for any business: its colours
-      // over drifting light, one beat on screen at a time while the voice says it (a headline, a number counting up,
-      // a list, a chat, a real review, then the call to action with the business's name), captions that follow the
-      // voice, a progress bar, a sound on every beat and the music bed under it.
+      // over drifting light, one beat on screen at a time, up for as long as it takes to read (a headline, a number
+      // counting up, a list, a chat, a real review, then the call to action with the business's name). No voice: the
+      // music carries it, with a progress bar and a sound on every beat.
       // spotlight fills CONFIG for each reel. Leave the import: motion swaps in the kit.
       import { alpha, clamp, expo, kit, page, presence, sfx, spring, THEMES } from "KIT";
 
@@ -25,7 +25,6 @@
             { kind: "cta", text: "Let Mitu take the DMs", sub: "Message us to try it", items: [], at: 14.5, end: 17 },
           ] };
       const SANS = 'Inter, "Noto Sans Bengali", "Noto Sans Devanagari", "Noto Sans Arabic", "Noto Color Emoji"';
-      const CAPTION_Y = 0.79;   // where the captions sit
       // ----------------------------------------------------------------------
 
       const lum = (h) => { const n = parseInt(h.slice(1), 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; };
@@ -171,14 +170,13 @@
           if (t >= b.at - 0.05 && t <= b.end + 0.9) (SCENES[b.kind] || SCENES.headline)(k, b, i);
           if (i) k.leak(b.at, 0.7, [ACCENT, INK]);
         });
-        if (t < BEATS.at(-1).at) k.captions({ y: k.H * CAPTION_Y, size: 64 });  // the end card speaks for itself
         k.progress();
         k.vignette(DARK ? 0.4 : 0.2);
         k.grain(0.045);
       }
 
       const audio = () => [
-        ...(MUSIC ? [{ path: "music.wav", at: 0, volume: 0.16, duck: true }] : []),
+        ...(MUSIC ? [{ path: "music.wav", at: 0, volume: 0.7 }] : []),
         ...BEATS.slice(1).map((b) => ({ path: sfx(b.kind === "cta" ? "shimmer" : "whoosh"), at: Math.max(0, b.at - 0.1), volume: 0.35 })),
         ...BEATS.filter((b) => b.kind === "chat" || b.kind === "list").flatMap((b) => landings(b).map((at) => ({ path: sfx("pop"), at, volume: 0.4 }))),
         ...BEATS.filter((b) => b.kind === "stat").map((b) => ({ path: sfx("tick"), at: b.at + 0.1, volume: 0.35 })),
