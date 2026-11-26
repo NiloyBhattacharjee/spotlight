@@ -35,6 +35,7 @@ Posting goes to every platform that is set up (env vars; one failing doesn't sto
     picks the format and angle, a copywriter writes it from the brief, a reviewer checks every claim against the brief
     and sends it back until it's right. No voice: text over music, in its colours, drawn by mockingbird
     (brand_motion.html), posted to its own pages in mitu.env (it refuses to post without one).
+    add --format "three reasons" to choose the format (any key of PROMO_FORMATS)
   add --dry-run to build without posting
   --book narrates with Kokoro (open-source, local) in the story's mood once set up, else Edge. Needs Python 3.10-3.12:
     py -3.11 -m venv .venv-kokoro
@@ -699,7 +700,7 @@ Don't list taste notes that wouldn't make the reel better.
 </draft>""", Review)
 
 
-def market(brand: str, brief: str, history: list[str], feedback: str, out: Path, drafts=3):
+def market(brand: str, brief: str, history: list[str], feedback: str, out: Path, drafts=3, fmt=""):
     """The orchestrator: strategist -> copywriter <-> reviewer (up to `drafts` drafts) -> producer. Every agent's
     answer goes to out/agents.json, so you can see who decided what. Returns the reel, its caption and the plan."""
     out.mkdir(parents=True, exist_ok=True)
@@ -709,7 +710,7 @@ def market(brand: str, brief: str, history: list[str], feedback: str, out: Path,
         (out / "agents.json").write_text(json.dumps(log, indent=1, ensure_ascii=False), encoding="utf-8")
         print(f"{agent}:", json.dumps(answer.model_dump(), ensure_ascii=False)[:300])
     recent = [p.get("format") for p in posts()[-2:]]
-    fmts = [f for f in PROMO_FORMATS if f not in recent and not (f == "real review" and "None yet" in brief)]
+    fmts = [fmt] if fmt else [f for f in PROMO_FORMATS if f not in recent and not (f == "real review" and "None yet" in brief)]
     plan = strategist(brief, fmts, history, feedback)
     note("strategist", plan)
     promo, notes = None, []
@@ -1773,7 +1774,10 @@ def main():
         path = BRANDS / f"{brand}.md"
         if not path.exists():
             sys.exit(f'{path} not found: draft it with  python spotlight.py --brand new {brand} <website or file>')
-        video, caption, plan = market(brand, path.read_text(encoding="utf-8"), history, feedback, out)
+        fmt = sys.argv[sys.argv.index("--format") + 1] if "--format" in sys.argv else ""
+        if fmt and fmt not in PROMO_FORMATS:
+            sys.exit(f"--format is one of: {', '.join(PROMO_FORMATS)}")
+        video, caption, plan = market(brand, path.read_text(encoding="utf-8"), history, feedback, out, fmt=fmt)
         key, what, extra = plan.angle, f"{plan.format}: {plan.angle}", {"format": plan.format}
     elif variety:
         recent = [p.get("format") for p in posts()[-2:]]

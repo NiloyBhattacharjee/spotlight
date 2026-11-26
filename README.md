@@ -6,6 +6,43 @@
 
 Spotlight is one Python script, `spotlight.py`. Claude writes the script for each reel through the Claude Code CLI, so you need no API key. Every reel is labelled as AI-generated wherever the platform's API allows it.
 
+## Examples
+
+**Business promos** (`--brand`): written by a team of agents from a business's brief, in its colours, text over music.
+
+<p><img src="docs/promo-mitu.jpg" alt="Five frames from a Mitu promo reel: a hook, a list of customer questions, a headline, a dramatised chat and the call to action"></p>
+<p><img src="docs/promo-little-fern.jpg" alt="Five frames from a Little Fern Café promo reel"></p>
+<p><img src="docs/promo-kacchi-ghor.jpg" alt="Five frames from a Kacchi Ghor promo reel, in Bangla"></p>
+
+**SCP lore** (`--scp`): a recovered VHS tape, with Claude's line drawings of the creature and a shaken narrator.
+
+<p><img src="docs/scp.jpg" alt="Five frames from an SCP reel: the Foundation Archives title card, two line drawings with typed subtitles, and the end-of-recording card"></p>
+
+**Classic books** (`--book`): AI-painted scenes, a moving camera and captions that follow the narrator.
+
+<p><img src="docs/book.jpg" alt="Four frames from a Frankenstein reel painted in candlelit oils"></p>
+
+## How it works
+
+```mermaid
+flowchart LR
+  A["Pick a topic<br/>Claude, told how past reels did"] --> B["Write the script<br/>Claude"]
+  B --> C["Voice<br/>Edge, Kokoro or Orpheus"]
+  C --> D["Pictures<br/>cards, AI paintings or Claude's drawings"]
+  D --> E["Motion graphics<br/>mockingbird"]
+  E --> F["Music and loudness<br/>levelled to -14 LUFS"]
+  F --> G["Post<br/>Instagram, Facebook, YouTube, TikTok"]
+  G --> H["Instagram's numbers<br/>1 to 30 days later"]
+  H --> A
+```
+
+1. **Pick and write.** Claude picks something the page hasn't covered and writes the reel, in a structured shape the script checks. Before it picks, it's told which of the page's past reels got the most and fewest views.
+2. **Voice.** Edge TTS for trivia and stories, Kokoro for books, and Orpheus on the graphics card for SCP. Business promos have no voice.
+3. **Pictures.** Cards drawn with Pillow, paintings from Cloudflare Workers AI, or SVG drawings Claude makes itself.
+4. **Motion.** mockingbird renders a page of canvas code over every frame: titles, captions, camera moves, tape glitches. Each mode has its own page: `book_motion.html`, `scp_motion.html` and `brand_motion.html`.
+5. **Sound.** A music bed or a synthesized drone under the voice, then the mix is levelled to Instagram's −14 LUFS.
+6. **Post.** It posts to every platform the page is set up for, and logs the post so its numbers come back into step 1.
+
 ## What it makes
 
 | Mode | Command | What you get |
@@ -24,6 +61,17 @@ Add `--dry-run` to build a reel without posting it. Finished reels go to `out/<d
 
 `--brand` reels are made by agents, each one Claude call with one job, run by an orchestrator (`market()` in `spotlight.py`):
 
+```mermaid
+flowchart TD
+  R["Researcher<br/>drafts the brief from a website or file"] --> Y{{"You check brands/name.md, once"}}
+  Y --> S["Strategist<br/>format, angle, the viewer's moment"]
+  S --> C["Copywriter<br/>beats and caption"]
+  C --> V{"Reviewer<br/>claims against the brief, hook, length"}
+  V -- "notes, up to 3 drafts" --> C
+  V -- approved --> P["Producer<br/>music and mockingbird"]
+  P --> U["Publisher<br/>the business's own pages"]
+```
+
 | Agent | Job |
 |---|---|
 | Researcher | Drafts the business's brief from its website, a file or a description (`--brand new`). You check it once. |
@@ -33,7 +81,24 @@ Add `--dry-run` to build a reel without posting it. Finished reels go to `out/<d
 | Producer | Code, not Claude: makes the music and draws the reel with mockingbird. |
 | Publisher | Code: posts to the business's own pages from its `<name>.env`. |
 
-Each agent's answer is saved to `out/<date_time>/agents.json`, so you can see who decided what.
+Each agent's answer is saved to `out/<date_time>/agents.json`, so you can see who decided what. In the Mitu reel above, the reviewer sent the first draft back with three notes:
+
+> - Beat 3: "Let Mitu answer, day or night" never says Mitu is an AI. With no voice, Mitu reads like a hired helper. Change to "Mitu: AI replies, day and night".
+> - Beat 4: "📷 Photo is M available?" reads as garbled text. Change to "📷 This one in M?".
+> - Beat 5: "Hands off to people" is unclear on its own. Change to "Brings in a person".
+
+The copywriter fixed all three, and the reviewer approved the second draft.
+
+To add a business:
+
+```
+python spotlight.py --brand new little-fern https://littlefern.example   # or a file, or "a description in quotes"
+# read brands/little-fern.md and fix anything wrong: it's all the reels will say
+python spotlight.py --brand little-fern --dry-run                        # make one without posting
+python spotlight.py --brand little-fern --format "three reasons"         # choose the format yourself
+```
+
+The formats are problem then fix, acted-out chat, three reasons, one number, before and after, spotlight, and real review. A real review is only used when the brief's Proof has one.
 
 ## Setup
 
@@ -49,6 +114,8 @@ You need:
     .venv-kokoro/Scripts/pip install kokoro soundfile en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
     ```
   - **mockingbird**, for the motion layer. Without it, book reels get plain burnt-in captions.
+- **mockingbird** for business promos, and for SCP reels' VHS look (without it, SCP reels get plain cards).
+- Optional, for SCP reels: Orpheus 3B on llama.cpp in `.orpheus/` for the narrator, or Chatterbox in `.venv-chatterbox/` (the top of `spotlight.py` has the steps). Without either, Kokoro reads them.
 - Optional, for Reddit reels: gameplay clips in `bg/`.
 
 ## Posting
@@ -68,7 +135,7 @@ Settings files, sign-in tokens and post logs (`*.env`, `*.tokens.json`, `*.posts
 
 ## Schedule
 
-Run `schedule.ps1` once, in PowerShell, to register two Windows Task Scheduler jobs:
+Run `schedule.ps1` once, in PowerShell, to register three Windows Task Scheduler jobs:
 
 | Task | Command | Times |
 |---|---|---|

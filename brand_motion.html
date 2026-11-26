@@ -52,6 +52,22 @@
         return out;
       }
 
+      // A short line of plain text. Not the kit's kicker: that spaces out each character, which breaks scripts that
+      // join letters (Bangla, Hindi, Arabic).
+      function line(k, text, at, out, y, size = 34, color = THEME.mute) {
+        const a = presence(k.now, at, out, 0.5, 0.3);
+        if (!a) return;
+        k.layer(() => {
+          const { ctx, W, u } = k;
+          ctx.globalAlpha = a;
+          ctx.font = `600 ${k.fit(text, W * 0.84, size, 600, SANS) * u}px ${SANS}`;
+          ctx.fillStyle = color;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(text, W / 2, y);
+        });
+      }
+
       // A headline in two or three lines, its last line in the accent colour.
       function headline(k, text, at, out, y, size, style = "rise") {
         const r = rows(k, text, size, k.W * 0.84);
@@ -101,7 +117,7 @@
       function chat(k, b) {
         const { ctx, W, H, u } = k, t = k.now;
         const lands = landings(b), FS = 40, LH = 52, PAD = 26;
-        k.kicker({ text: NAME, at: b.at, out: b.end, y: H * 0.17, size: 28 });
+        line(k, NAME, b.at, b.end, H * 0.17, 32, ACCENT);
         const shown = b.items.map((text, j) => ({ text, j, land: lands[j] })).filter((x) => t >= x.land);
         let y = H * 0.66;
         for (const msg of shown.reverse()) {
@@ -155,7 +171,7 @@
       const SCENES = {
         headline: (k, b, i) => {
           headline(k, b.text, b.at, b.end, k.H * 0.42, i === 0 ? 112 : 96, i === 0 ? "slam" : "rise");
-          if (b.sub) k.kicker({ text: b.sub, at: b.at + 0.4, out: b.end, y: k.H * 0.56, size: 30 });
+          if (b.sub) line(k, b.sub, b.at + 0.4, b.end, k.H * 0.56);
         },
         stat, list, chat, cta,
         quote: (k, b) => k.quote({ text: b.text, by: b.sub, at: b.at, out: b.end, size: 72 }),
