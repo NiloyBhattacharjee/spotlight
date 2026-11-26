@@ -1,7 +1,7 @@
-# Runs slopcannon on its own every day through Windows Task Scheduler: the books page, the Reddit stories page and the SCP page,
+# Runs spotlight on its own every day through Windows Task Scheduler: the books page, the Reddit stories page and the SCP page,
 # each twice a day, with its settings in books.env / stories.env / scp.env (see page.env.example). Run once (again after changing a time):  powershell -ExecutionPolicy Bypass -File schedule.ps1
 # The PC has to be on and you signed in (a locked screen is fine). Missed runs start as soon as it's back on.
-# Output goes to logs\<page>.log. Remove a page with:  Unregister-ScheduledTask "slopcannon books"
+# Output goes to logs\<page>.log. Remove a page with:  Unregister-ScheduledTask "spotlight books"
 
 $dir = $PSScriptRoot
 $py = (Get-Command python).Source
@@ -13,10 +13,10 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -WakeToRun -Multipl
 
 function Add-Page($name, $reelArgs, $times) {
     $action = New-ScheduledTaskAction -Execute "cmd.exe" -WorkingDirectory $dir `
-        -Argument "/c `"`"$py`" -u slopcannon.py $reelArgs >> logs\$name.log 2>&1`""
+        -Argument "/c `"`"$py`" -u spotlight.py $reelArgs >> logs\$name.log 2>&1`""
     $triggers = $times | ForEach-Object { New-ScheduledTaskTrigger -Daily -At $_ }
-    Register-ScheduledTask -TaskName "slopcannon $name" -Action $action -Trigger $triggers -Settings $settings -Force | Out-Null
-    Write-Output "slopcannon ${name}: daily at $($times -join ', ')"
+    Register-ScheduledTask -TaskName "spotlight $name" -Action $action -Trigger $triggers -Settings $settings -Force | Out-Null
+    Write-Output "spotlight ${name}: daily at $($times -join ', ')"
 }
 
 # Book reels take about 20 minutes to make, so they start 20 minutes before the time they should go out.

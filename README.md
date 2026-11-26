@@ -1,22 +1,22 @@
-<p align="center"><img src="logo.svg" width="128" alt="slopcannon logo"></p>
+<p align="center"><img src="logo.svg" width="128" alt="Spotlight logo"></p>
 
-<h1 align="center">slopcannon</h1>
+<h1 align="center">Spotlight</h1>
 
 <p align="center">Makes short vertical videos and posts them to Instagram, Facebook, YouTube Shorts and TikTok on a schedule.</p>
 
-slopcannon is one Python script, `slopcannon.py`. Claude writes the script for each reel through the Claude Code CLI, so you need no API key. Every reel is labelled as AI-generated wherever the platform's API allows it.
+Spotlight is one Python script, `spotlight.py`. Claude writes the script for each reel through the Claude Code CLI, so you need no API key. Every reel is labelled as AI-generated wherever the platform's API allows it.
 
 ## What it makes
 
 | Mode | Command | What you get |
 |---|---|---|
-| Trivia | `python slopcannon.py` | An infographic reel of surprising facts, narrated with Edge TTS. |
-| Variety | `python slopcannon.py --variety` | A different listicle each run: would you rather, red flags, ranked, fake or real, unpopular opinions or nobody tells you. It never repeats the last two formats. |
-| SCP lore | `python slopcannon.py --scp` or `--scp SCP-173` | A random SCP article rated 100 or more, told as a memory by someone who was there: a retired researcher, a former guard, a surviving D-class. The narrator sounds like a real person, exhausted and sad and still scared of it, on a tape that skips and crackles between words, from Orpheus running locally on the graphics card (Chatterbox, then Kokoro, if it isn't set up), over a synthesized suspense drone with a heartbeat. mockingbird draws it as a recovered VHS tape (`scp_motion.html`): strange line drawings Claude makes of the thing for each reel, traced on black and tearing with the tape, each line typed as a subtitle as it's spoken, and the pop-up captions flashed in red. Without mockingbird it falls back to plain cards. Articles come from the SCP dataset at scp-data.tedivm.com, and every reel credits the author under CC BY-SA 3.0. |
-| Reddit stories | `python slopcannon.py --reddit` | A popular drama or revenge post retold in Claude's own words over gameplay footage from `bg/`. It is credited "Based on a story by u/… on r/…". |
-| Classic books | `python slopcannon.py --book` or `--book "White Nights"` | A story reel in the style of TED-Ed about a public-domain classic. It has flat-vector art from Cloudflare Workers AI (Pollinations if Cloudflare isn't set up), a Kokoro narrator that matches the story's mood (sombre, eerie, tense, tender or wry), ambience for the setting (rain, snow, mist, embers or dust), and a motion layer drawn by mockingbird (`book_motion.html`). The final mix is levelled to −14 LUFS. |
-| Business promos | `python slopcannon.py --brand new mitu <website or file>`, then `--brand mitu` | Promo reels for any business. The first command has Claude draft `brands/mitu.md`, a marketing brief (what it does, who it's for, proof, offers, call to action, tone, colours, what never to say) from its website, a file or a description; you check it once. Each run then picks a format the page hasn't had lately (problem then fix, an acted-out chat, three reasons, one number, before and after, a spotlight, a real review), writes a 20 to 35 second script that claims only what the brief says, and mockingbird draws it in the business's colours (`brand_motion.html`) with captions and an upbeat music bed. Acted-out chats are labelled as dramatised. A business's reels post only to the pages in its own `mitu.env`. |
-| Test | `python slopcannon.py --demo` | A built-in trivia sample. It makes no API calls and posts nothing. |
+| Trivia | `python spotlight.py` | An infographic reel of surprising facts, narrated with Edge TTS. |
+| Variety | `python spotlight.py --variety` | A different listicle each run: would you rather, red flags, ranked, fake or real, unpopular opinions or nobody tells you. It never repeats the last two formats. |
+| SCP lore | `python spotlight.py --scp` or `--scp SCP-173` | A random SCP article rated 100 or more, told as a memory by someone who was there: a retired researcher, a former guard, a surviving D-class. The narrator sounds like a real person, exhausted and sad and still scared of it, on a tape that skips and crackles between words, from Orpheus running locally on the graphics card (Chatterbox, then Kokoro, if it isn't set up), over a synthesized suspense drone with a heartbeat. mockingbird draws it as a recovered VHS tape (`scp_motion.html`): strange line drawings Claude makes of the thing for each reel, traced on black and tearing with the tape, each line typed as a subtitle as it's spoken, and the pop-up captions flashed in red. Without mockingbird it falls back to plain cards. Articles come from the SCP dataset at scp-data.tedivm.com, and every reel credits the author under CC BY-SA 3.0. |
+| Reddit stories | `python spotlight.py --reddit` | A popular drama or revenge post retold in Claude's own words over gameplay footage from `bg/`. It is credited "Based on a story by u/… on r/…". |
+| Classic books | `python spotlight.py --book` or `--book "White Nights"` | A story reel in the style of TED-Ed about a public-domain classic. It has flat-vector art from Cloudflare Workers AI (Pollinations if Cloudflare isn't set up), a Kokoro narrator that matches the story's mood (sombre, eerie, tense, tender or wry), ambience for the setting (rain, snow, mist, embers or dust), and a motion layer drawn by mockingbird (`book_motion.html`). The final mix is levelled to −14 LUFS. |
+| Business promos | `python spotlight.py --brand new mitu <website or file>`, then `--brand mitu` | Promo reels for any business. The first command has Claude draft `brands/mitu.md`, a marketing brief (what it does, who it's for, proof, offers, call to action, tone, colours, what never to say) from its website, a file or a description; you check it once. Each run then picks a format the page hasn't had lately (problem then fix, an acted-out chat, three reasons, one number, before and after, a spotlight, a real review), writes a 20 to 35 second script that claims only what the brief says, and mockingbird draws it in the business's colours (`brand_motion.html`) with captions and an upbeat music bed. Acted-out chats are labelled as dramatised. A business's reels post only to the pages in its own `mitu.env`. |
+| Test | `python spotlight.py --demo` | A built-in trivia sample. It makes no API calls and posts nothing. |
 
 Add `--dry-run` to build a reel without posting it. Finished reels go to `out/<date_time>/reel.mp4`.
 
@@ -42,9 +42,9 @@ Each page (account) has its own settings file. To set one up, copy `page.env.exa
 
 | Platform | Settings | One-time step |
 |---|---|---|
-| Instagram and Facebook | `IG_USER_ID`, `IG_TOKEN`, `FB_PAGE_ID`, `FB_PAGE_TOKEN` | Run `python slopcannon.py --meta` with a Meta system user token. It prints all four values for each of your Pages. |
-| YouTube | `YT_CLIENT_ID`, `YT_CLIENT_SECRET` (a Desktop OAuth client) | `python slopcannon.py --env books.env --login youtube` |
-| TikTok | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REDIRECT_URI` | `python slopcannon.py --env books.env --login tiktok`. Posts stay private (`TIKTOK_PRIVACY=SELF_ONLY`) until TikTok audits the app. |
+| Instagram and Facebook | `IG_USER_ID`, `IG_TOKEN`, `FB_PAGE_ID`, `FB_PAGE_TOKEN` | Run `python spotlight.py --meta` with a Meta system user token. It prints all four values for each of your Pages. |
+| YouTube | `YT_CLIENT_ID`, `YT_CLIENT_SECRET` (a Desktop OAuth client) | `python spotlight.py --env books.env --login youtube` |
+| TikTok | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REDIRECT_URI` | `python spotlight.py --env books.env --login tiktok`. Posts stay private (`TIKTOK_PRIVACY=SELF_ONLY`) until TikTok audits the app. |
 | Book art | `CF_ACCOUNT_ID`, `CF_API_TOKEN` (the Workers AI token template) | None |
 
 A platform with missing settings is skipped. If one platform fails, the others still post.
@@ -57,15 +57,15 @@ Run `schedule.ps1` once, in PowerShell, to register two Windows Task Scheduler j
 
 | Task | Command | Times |
 |---|---|---|
-| `slopcannon books` | `--book --env books.env` | 10:40 and 18:40 |
-| `slopcannon stories` | `--reddit --env stories.env` | 12:55 and 20:55 |
-| `slopcannon scp` | `--scp --env scp.env` | 16:50 and 22:50 |
+| `spotlight books` | `--book --env books.env` | 10:40 and 18:40 |
+| `spotlight stories` | `--reddit --env stories.env` | 12:55 and 20:55 |
+| `spotlight scp` | `--scp --env scp.env` | 16:50 and 22:50 |
 
 Each job catches up after the PC was asleep, wakes the PC to run, and retries twice. Output goes to `logs/<page>.log`.
 
 ## Learning from views
 
-Every posted reel is logged. Before each run, slopcannon pulls Instagram's views, reach, shares, saves and average watch time for reels posted 1 to 30 days ago. It tells Claude which reels did best and worst before Claude picks the next topic.
+Every posted reel is logged. Before each run, Spotlight pulls Instagram's views, reach, shares, saves and average watch time for reels posted 1 to 30 days ago. It tells Claude which reels did best and worst before Claude picks the next topic.
 
 ## Promo reels for Mitu
 

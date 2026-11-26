@@ -4,41 +4,41 @@ Claude runs through the Claude Code CLI (`claude -p`, your Claude login), so no 
 Posting goes to every platform that is set up (env vars; one failing doesn't stop the others):
   Instagram  IG_USER_ID, IG_TOKEN (instagram_basic, instagram_content_publish, instagram_manage_insights)
   Facebook   FB_PAGE_ID, FB_PAGE_TOKEN (pages_show_list, pages_read_engagement, pages_manage_posts)
-             With a Meta system user token: python slopcannon.py --meta  prints all four for each of your Pages
-  YouTube    YT_CLIENT_ID, YT_CLIENT_SECRET (a Desktop OAuth client), then once: python slopcannon.py --login youtube
-  TikTok     TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_REDIRECT_URI, then once: python slopcannon.py --login tiktok
+             With a Meta system user token: python spotlight.py --meta  prints all four for each of your Pages
+  YouTube    YT_CLIENT_ID, YT_CLIENT_SECRET (a Desktop OAuth client), then once: python spotlight.py --login youtube
+  TikTok     TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_REDIRECT_URI, then once: python spotlight.py --login tiktok
              TIKTOK_PRIVACY defaults to SELF_ONLY: TikTok allows only private posts until the app passes its audit
   Two pages, one niche each: put a page's settings in an env file (copy page.env.example) and pass --env books.env.
   Its platform settings replace the environment's, so a reel never lands on the other page; its YouTube/TikTok
   sign-ins go to books.tokens.json. schedule.ps1 runs each page on its own daily times.
   Feedback loop: every posted reel is logged (books.posts.json); each run pulls Instagram's views, average watch
   time and shares for reels 1-30 days old and tells Claude what did best and worst before it picks the next one.
-  python slopcannon.py              trivia infographic reel, posted
-  python slopcannon.py --variety    a different listicle format each run (would you rather, red flags, ranked, ...), posted
-  python slopcannon.py --variety "RED FLAGS"   the same, in a format you choose (any key of VARIETY)
-  python slopcannon.py --scp        a random SCP Foundation article (rated 100+) narrated by a gloomy local voice, posted
-  python slopcannon.py --scp SCP-173   the same, for an SCP you choose
+  python spotlight.py              trivia infographic reel, posted
+  python spotlight.py --variety    a different listicle format each run (would you rather, red flags, ranked, ...), posted
+  python spotlight.py --variety "RED FLAGS"   the same, in a format you choose (any key of VARIETY)
+  python spotlight.py --scp        a random SCP Foundation article (rated 100+) narrated by a gloomy local voice, posted
+  python spotlight.py --scp SCP-173   the same, for an SCP you choose
     --scp draws a glitching VHS tape of strange line drawings Claude makes for each SCP (scp_motion.html) with
     mockingbird when installed, else plain cards. It voices with Orpheus once .orpheus/ is set up, else Chatterbox
     (local, expressive) once set up, else Kokoro. Chatterbox copies scp_voice.wav, made
     once with Kokoro; swap in any 10 s clip of a voice you like. Needs Python 3.10-3.12:
       py -3.11 -m venv .venv-chatterbox
       .venv-chatterbox/Scripts/pip install chatterbox-tts
-  python slopcannon.py --reddit     drama/revenge Reddit story reel (r/AmItheAsshole, r/pettyrevenge, ...), posted
-  python slopcannon.py --book       animated story of a public-domain classic, told TED-Ed style, posted
-  python slopcannon.py --book "White Nights"   the same, for a book you choose
+  python spotlight.py --reddit     drama/revenge Reddit story reel (r/AmItheAsshole, r/pettyrevenge, ...), posted
+  python spotlight.py --book       animated story of a public-domain classic, told TED-Ed style, posted
+  python spotlight.py --book "White Nights"   the same, for a book you choose
   --book draws its motion layer (book_motion.html: title, captions, mist, light) with mockingbird when installed,
   else burns plain captions in.
-  python slopcannon.py --brand new mitu https://mitu.example   draft brands/mitu.md, a business's marketing brief, from
+  python spotlight.py --brand new mitu https://mitu.example   draft brands/mitu.md, a business's marketing brief, from
     its website, a file (a README, a menu) or "a description in quotes"; read it and fix anything wrong before using it
-  python slopcannon.py --brand mitu   a promo reel for that business in a format it hasn't had lately (problem then
+  python spotlight.py --brand mitu   a promo reel for that business in a format it hasn't had lately (problem then
     fix, acted-out chat, three reasons, ...), in its colours, drawn by mockingbird (brand_motion.html), posted to its
     own pages in mitu.env (it refuses to post without one). Everything it claims comes from the brief.
   add --dry-run to build without posting
   --book narrates with Kokoro (open-source, local) in the story's mood once set up, else Edge. Needs Python 3.10-3.12:
     py -3.11 -m venv .venv-kokoro
     .venv-kokoro/Scripts/pip install kokoro soundfile en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
-  python slopcannon.py --demo       render a built-in trivia sample (no API calls) to test the pipeline
+  python spotlight.py --demo       render a built-in trivia sample (no API calls) to test the pipeline
 """
 import asyncio, base64, html, io, json, os, random, re, shutil, subprocess, sys, time
 import urllib.parse
@@ -423,7 +423,7 @@ def fetch_reddit(sub: str) -> list[dict]:
     # Reddit's JSON API now needs an approved app; the public RSS feed still works without one.
     for _ in range(5):
         r = requests.get(f"https://www.reddit.com/r/{sub}/top/.rss", params={"t": TOP_WINDOW, "limit": 100},
-                         headers={"User-Agent": "windows:slopcannon:0.1"}, timeout=30)
+                         headers={"User-Agent": "windows:spotlight:0.1"}, timeout=30)
         if r.status_code != 429 and r.text:
             break
         time.sleep(30)  # ponytail: unauthenticated RSS is rate-limited hard; fine for a few runs a day
@@ -585,7 +585,7 @@ def new_brand(name: str, source: str):
     BRANDS.mkdir(exist_ok=True)
     path.write_text(ask(BRIEF_PROMPT.format(name=name, source=source[:20000]), Brief).markdown, encoding="utf-8")
     print(f"wrote {path}\nRead it and fix anything wrong (it's all the reels will say), copy page.env.example to "
-          f"{name}.env for its pages, then: python slopcannon.py --brand {name} --dry-run")
+          f"{name}.env for its pages, then: python spotlight.py --brand {name} --dry-run")
 
 
 def write_promo(brief: str, fmt: str, history: list[str], feedback: str) -> Promo:
@@ -1209,7 +1209,7 @@ def mockingbird(tool: str, args: dict) -> str:
         raise RuntimeError("mockingbird exited without answering")
     try:
         send({"id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {},
-                                                          "clientInfo": {"name": "slopcannon", "version": "1"}}})
+                                                          "clientInfo": {"name": "spotlight", "version": "1"}}})
         reply(1)
         send({"method": "notifications/initialized"})
         send({"id": 2, "method": "tools/call", "params": {"name": tool, "arguments": args}})
@@ -1551,7 +1551,7 @@ def login(site: str):
                                  os.environ["TIKTOK_REDIRECT_URI"])
         url = "https://www.tiktok.com/v2/auth/authorize/?" + urllib.parse.urlencode({
             "client_key": cid, "redirect_uri": redirect, "response_type": "code", "scope": "video.publish",
-            "state": "slopcannon"})
+            "state": "spotlight"})
     else:
         sys.exit("--login youtube or --login tiktok")
     print(f"Open this, approve, then copy the address you land on:\n{url}\n")
@@ -1587,7 +1587,7 @@ def main():
     if brand == "new":
         args = sys.argv[sys.argv.index("--brand") + 2:]
         if len(args) < 2:
-            sys.exit('usage: python slopcannon.py --brand new <name> <website, file or "a description">')
+            sys.exit('usage: python spotlight.py --brand new <name> <website, file or "a description">')
         return new_brand(args[0], " ".join(args[1:]))
     if "--env" in sys.argv:
         use_env(HERE / sys.argv[sys.argv.index("--env") + 1])
@@ -1602,7 +1602,7 @@ def main():
     demo, dry, reddit, book, variety, scp = (a in sys.argv for a in ("--demo", "--dry-run", "--reddit", "--book",
                                                                       "--variety", "--scp"))
     if not (demo or dry or ready()):  # don't spend 20 minutes building a reel with nowhere to post it
-        sys.exit("posted nowhere: set up at least one platform (see the top of slopcannon.py)")
+        sys.exit("posted nowhere: set up at least one platform (see the top of spotlight.py)")
     hist_file = (BRANDS / f"{brand}.history.json" if brand else
                  HERE / ("reddit_history.json" if reddit else "book_history.json" if book else
                          "variety_history.json" if variety else "scp_history.json" if scp else "history.json"))
@@ -1669,7 +1669,7 @@ def main():
     elif brand:
         path = BRANDS / f"{brand}.md"
         if not path.exists():
-            sys.exit(f'{path} not found: draft it with  python slopcannon.py --brand new {brand} <website or file>')
+            sys.exit(f'{path} not found: draft it with  python spotlight.py --brand new {brand} <website or file>')
         brief = path.read_text(encoding="utf-8")
         recent = [p.get("format") for p in posts()[-2:]]
         fmts = [f for f in PROMO_FORMATS if f not in recent and not (f == "real review" and "None yet" in brief)]
@@ -1697,7 +1697,7 @@ def main():
         return
     ids = publish(video, caption)
     if not ids:
-        sys.exit("posted nowhere: set up at least one platform (see the top of slopcannon.py)")
+        sys.exit("posted nowhere: set up at least one platform (see the top of spotlight.py)")
     hist_file.write_text(json.dumps(history + [key], indent=1))
     POSTS.write_text(json.dumps(posts() + [{"what": what, "at": time.time(), "ids": ids, **extra}], indent=1), encoding="utf-8")
 
