@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /></head>
+  <body style="margin: 0">
+    <script type="module">
+      // What slopcannon --brand draws each promo reel as, with mockingbird's `motion`, for any business: its colours
+      // over drifting light, one beat on screen at a time while the voice says it (a headline, a number counting up,
+      // a list, a chat, a real review, then the call to action with the business's name), captions that follow the
+      // voice, a progress bar, a sound on every beat and the music bed under it.
+      // slopcannon fills CONFIG for each reel. Leave the import: motion swaps in the kit.
+      import { alpha, clamp, expo, kit, page, presence, sfx, spring, THEMES } from "KIT";
+
+      // ---- settings --------------------------------------------------------
+      /** name: the business, colors: [background, accent] hex, dramatised: a chat is acted out, not real,
+       *  music: a music.wav sits beside this page, beats: [{ kind, text, sub, items, at, end }]. */
+      const { name: NAME, colors: [BG, ACCENT], dramatised: DRAMA, music: MUSIC, beats: BEATS } =
+        /*CONFIG*/{ name: "Mitu", colors: ["#06110D", "#34D399"], dramatised: true, music: false,
+          beats: [
+            { kind: "headline", text: "It's 3 AM and 14 people just asked “price?”", sub: "", items: [], at: 0, end: 3 },
+            { kind: "chat", text: "", sub: "", at: 3, end: 7.5,
+              items: ["price?", "The Indigo Kurti is ৳1,450. Sizes S to XL, 12 left 💙", "L? COD outside Dhaka?", "Yes, L is in stock. Delivery is ৳130 and cash on delivery is fine. Shall I place it?"] },
+            { kind: "stat", text: "2 s", sub: "to answer a DM", items: [], at: 7.5, end: 9.5 },
+            { kind: "list", text: "Mitu handles", sub: "", items: ["Prices and stock", "Voice notes", "COD and bKash"], at: 9.5, end: 12 },
+            { kind: "quote", text: "A real review from the brief goes here, word for word.", sub: "Its author", items: [], at: 12, end: 14.5 },
+            { kind: "cta", text: "Let Mitu take the DMs", sub: "Message us to try it", items: [], at: 14.5, end: 17 },
+          ] };
+      const SANS = 'Inter, "Noto Sans Bengali", "Noto Sans Devanagari", "Noto Sans Arabic", "Noto Color Emoji"';
+      const CAPTION_Y = 0.79;   // where the captions sit
+      // ----------------------------------------------------------------------
+
+      const lum = (h) => { const n = parseInt(h.slice(1), 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; };
+      const DARK = lum(BG) < 0.5;
+      const INK = DARK ? "#F7F7F5" : "#121316";
+      const THEME = { ...THEMES.night, bg: [BG, BG], glows: [ACCENT, ACCENT, INK], dark: DARK, glow: DARK ? 0.4 : 0.2,
+                      ink: INK, mute: alpha(INK, 0.64), accent: ACCENT, accent2: ACCENT,
+                      onAccent: lum(ACCENT) > 0.55 ? "#0B0B0D" : "#FFFFFF", display: SANS };
+
+      // When each chat message or list item lands: spread through its beat, leaving the last stretch to read.
+      const landings = (b) => b.items.map((_, j) => b.at + 0.25 + j * Math.min(1.4, (b.end - b.at - 0.8) / Math.max(1, b.items.length)));
+
+      // Greedy word wrap at a size, in the kit's units.
+      function rows(k, text, size, maxW, weight = 800) {
+        const { ctx, u } = k;
+        ctx.save();
+        ctx.font = `${weight} ${size * u}px ${SANS}`;
+        const out = [];
+        for (const w of text.split(" ")) {
+          const next = out.length ? `${out.at(-1)} ${w}` : w;
+          if (out.length && ctx.measureText(next).width <= maxW) out[out.length - 1] = next;
+          else out.push(w);
+        }
+        ctx.restore();
+        return out;
+      }
+
+      // A headline in two or three lines, its last line in the accent colour.
+      function headline(k, text, at, out, y, size, style = "rise") {
+        const r = rows(k, text, size, k.W * 0.84);
+        k.title({ lines: r.map((l, j) => [{ text: l, color: j === r.length - 1 && r.length > 1 ? ACCENT : INK }]),
+                  at, out, y, size, style, maxWidth: k.W * 0.88 });
+      }
+
+      function stat(k, b) {
+        const n = b.text.match(/^([^\d]*)([\d][\d,]*(?:\.\d+)?)(.*)$/);
+        if (!n) return headline(k, b.text, b.at, b.end, k.H * 0.4, 150, "slam");
+        const [, prefix, num, suffix] = n;
+        const decimals = (num.split(".")[1] || "").length;
+        k.counter({ at: b.at, out: b.end, to: Number(num.replace(/,/g, "")), prefix, suffix, decimals, y: k.H * 0.4, size: 230 });
+        if (b.sub) headline(k, b.sub, b.at + 0.35, b.end, k.H * 0.52, 64);
+      }
+
+      function list(k, b) {
+        const { ctx, W, H, u } = k, t = k.now;
+        headline(k, b.text, b.at, b.end, H * 0.24, 84);
+        landings(b).forEach((land, j) => {
+          const pop = spring(t, { from: 0, to: 1, start: land, stiffness: 200, damping: 15 });
+          const a = presence(t, land, b.end, 0.2, 0.35);
+          if (!a) return;
+          k.layer(() => {
+            const y = H * 0.36 + j * 128 * u, x = W * 0.12, w = W * 0.76, h = 104 * u;
+            ctx.globalAlpha = a;
+            ctx.translate(0, (1 - pop) * 40 * u);
+            ctx.fillStyle = alpha(INK, DARK ? 0.08 : 0.06);
+            ctx.beginPath(); ctx.roundRect(x, y, w, h, h / 2); ctx.fill();
+            ctx.fillStyle = ACCENT;
+            ctx.beginPath(); ctx.arc(x + h / 2, y + h / 2, h * 0.3, 0, 2 * Math.PI); ctx.fill();
+            ctx.strokeStyle = THEME.onAccent; ctx.lineWidth = 6 * u; ctx.lineCap = ctx.lineJoin = "round";
+            const c = clamp((t - land - 0.1) / 0.3);
+            ctx.beginPath(); ctx.moveTo(x + h * 0.38, y + h * 0.5);
+            ctx.lineTo(x + h * 0.38 + h * 0.1 * c, y + h * 0.5 + h * 0.1 * c);
+            if (c > 0.5) ctx.lineTo(x + h * 0.48 + h * 0.18 * (c - 0.5) * 2, y + h * 0.6 - h * 0.24 * (c - 0.5) * 2);
+            ctx.stroke();
+            const size = k.fit(b.items[j], w - h * 1.3, 48, 700, SANS);
+            ctx.font = `700 ${size * u}px ${SANS}`;
+            ctx.fillStyle = INK; ctx.textBaseline = "middle";
+            ctx.fillText(b.items[j], x + h * 1.05, y + h / 2 + 2 * u);
+          });
+        });
+      }
+
+      // A chat: the customer on the left, the business on the right in its accent, the newest at the bottom.
+      function chat(k, b) {
+        const { ctx, W, H, u } = k, t = k.now;
+        const lands = landings(b), FS = 40, LH = 52, PAD = 26;
+        k.kicker({ text: NAME, at: b.at, out: b.end, y: H * 0.17, size: 28 });
+        const shown = b.items.map((text, j) => ({ text, j, land: lands[j] })).filter((x) => t >= x.land);
+        let y = H * 0.66;
+        for (const msg of shown.reverse()) {
+          const mine = msg.j % 2 === 1;
+          const r = rows(k, msg.text, FS, W * 0.62, 500);
+          ctx.save();
+          ctx.font = `500 ${FS * u}px ${SANS}`;
+          const w = Math.max(...r.map((l) => ctx.measureText(l).width)) + PAD * 2 * u, h = r.length * LH * u + PAD * 1.4 * u;
+          ctx.restore();
+          y -= h + 18 * u;
+          if (y < H * 0.2) break;
+          const a = presence(t, msg.land, b.end, 0.2, 0.35), pop = spring(t, { from: 0.6, to: 1, start: msg.land, stiffness: 260, damping: 18 });
+          const x = mine ? W * 0.92 - w : W * 0.08;
+          k.layer(() => {
+            ctx.globalAlpha = a;
+            ctx.translate(x + (mine ? w : 0), y + h);
+            ctx.scale(pop, pop);
+            ctx.translate(-(mine ? w : 0), -h);
+            ctx.fillStyle = mine ? ACCENT : alpha(INK, DARK ? 0.12 : 0.08);
+            ctx.beginPath(); ctx.roundRect(0, 0, w, h, 30 * u); ctx.fill();
+            ctx.font = `500 ${FS * u}px ${SANS}`;
+            ctx.fillStyle = mine ? THEME.onAccent : INK; ctx.textBaseline = "top";
+            r.forEach((l, i) => ctx.fillText(l, PAD * u, PAD * 0.7 * u + i * LH * u + 4 * u));
+          });
+        }
+        if (DRAMA) k.kicker({ text: "Dramatisation", at: b.at, out: b.end, y: H * 0.13, size: 26, color: THEME.mute });
+      }
+
+      function cta(k, b) {
+        const { ctx, W, H, u } = k, t = k.now;
+        k.title({ lines: [[{ text: NAME, color: ACCENT }]], at: b.at, out: 1 / 0, y: H * 0.34, size: 150, style: "slam", glow: true });
+        headline(k, b.text, b.at + 0.3, 1 / 0, H * 0.46, 72);
+        if (!b.sub) return;
+        const pop = spring(t, { from: 0, to: 1, start: b.at + 0.7, stiffness: 220, damping: 14 });
+        if (t < b.at + 0.7) return;
+        k.layer(() => {
+          const size = k.fit(b.sub, W * 0.7, 52, 700, SANS);
+          ctx.font = `700 ${size * u}px ${SANS}`;
+          const w = ctx.measureText(b.sub).width + 90 * u, h = size * u * 2.1;
+          ctx.translate(W / 2, H * 0.585);
+          ctx.scale(pop, pop);
+          ctx.shadowColor = alpha(ACCENT, 0.6); ctx.shadowBlur = 40 * u;
+          ctx.fillStyle = ACCENT;
+          ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, h / 2); ctx.fill();
+          ctx.shadowColor = "transparent";
+          ctx.fillStyle = THEME.onAccent; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(b.sub, 0, 2 * u);
+        });
+      }
+
+      const SCENES = {
+        headline: (k, b, i) => {
+          headline(k, b.text, b.at, b.end, k.H * 0.42, i === 0 ? 112 : 96, i === 0 ? "slam" : "rise");
+          if (b.sub) k.kicker({ text: b.sub, at: b.at + 0.4, out: b.end, y: k.H * 0.56, size: 30 });
+        },
+        stat, list, chat, cta,
+        quote: (k, b) => k.quote({ text: b.text, by: b.sub, at: b.at, out: b.end, size: 72 }),
+      };
+
+      function draw(ctx, t, m) {
+        const k = kit(ctx, t, m, THEME);
+        k.now = t;
+        k.backdrop({ grid: true });
+        k.bokeh({ opacity: 0.22 });
+        BEATS.forEach((b, i) => {
+          if (t >= b.at - 0.05 && t <= b.end + 0.9) (SCENES[b.kind] || SCENES.headline)(k, b, i);
+          if (i) k.leak(b.at, 0.7, [ACCENT, INK]);
+        });
+        if (t < BEATS.at(-1).at) k.captions({ y: k.H * CAPTION_Y, size: 64 });  // the end card speaks for itself
+        k.progress();
+        k.vignette(DARK ? 0.4 : 0.2);
+        k.grain(0.045);
+      }
+
+      const audio = () => [
+        ...(MUSIC ? [{ path: "music.wav", at: 0, volume: 0.16, duck: true }] : []),
+        ...BEATS.slice(1).map((b) => ({ path: sfx(b.kind === "cta" ? "shimmer" : "whoosh"), at: Math.max(0, b.at - 0.1), volume: 0.35 })),
+        ...BEATS.filter((b) => b.kind === "chat" || b.kind === "list").flatMap((b) => landings(b).map((at) => ({ path: sfx("pop"), at, volume: 0.4 }))),
+        ...BEATS.filter((b) => b.kind === "stat").map((b) => ({ path: sfx("tick"), at: b.at + 0.1, volume: 0.35 })),
+      ];
+
+      page(draw, { audio });
+    </script>
+  </body>
+</html>

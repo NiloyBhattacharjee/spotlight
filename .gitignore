@@ -21,3 +21,4 @@ scp_history.json
 scp_cache/
 scp_voice.wav
 .orpheus/
+brands/*.history.json
