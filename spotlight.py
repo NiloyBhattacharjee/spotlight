@@ -202,6 +202,12 @@ class ScpScript(BaseModel):
     caption: str        # the post caption: one hook line, then 5-7 hashtags
 
 
+class YouTubeText(BaseModel):
+    title: str
+    description: str
+    tags: list[str]
+
+
 class Brief(BaseModel):
     markdown: str
 
@@ -513,6 +519,22 @@ def pick_scp(seen: list[str], name: str = ""):
 
 
 UNSPOKEN = r"\s*(\(pause\)|<\w+>)\s*"  # marks the narrator acts on but the cards don't show: (pause), <sigh>...
+
+
+def youtube_text(caption: str) -> YouTubeText:
+    """YouTube is searched, unlike a Reel: a title and description people would type, not just the hook."""
+    t = ask(f"""Write the YouTube title, description and tags for a Short. This is its Instagram caption:
+
+{caption}
+
+- title: under 70 characters. Say what the video is about in words people search for, and make them want to
+  watch, but promise nothing the video doesn't deliver. No hashtags, no all-caps words, no emoji.
+- description: 2 or 3 sentences on what the viewer will see or learn, with the words people search for worked in.
+  Don't repeat the title, and leave out hashtags and credits: the caption goes underneath it as it is.
+- tags: 6 to 10 search phrases, lower case.
+Write in the caption's language.""", YouTubeText)
+    t.description = f"{t.description}\n\n{caption}"  # keeps the credits, licence and dramatised note verbatim
+    return t
 
 
 def write_scp(key: str, article: str, used: list[str]) -> ScpScript:
@@ -1532,11 +1554,15 @@ def youtube(video: Path, caption: str) -> str:
         "client_id": os.environ["YT_CLIENT_ID"], "client_secret": os.environ["YT_CLIENT_SECRET"],
         "refresh_token": tokens()["youtube"], "grant_type": "refresh_token"}))["access_token"]
     auth = {"Authorization": f"Bearer {tok}"}
-    title = re.sub(r"[<>]", "", caption.splitlines()[0]).strip()[:100] or "New short"
+    saved = video.parent / "youtube.json"  # written by main(); older reels fall back to the caption
+    t = (YouTubeText.model_validate_json(saved.read_text(encoding="utf-8")) if saved.exists()
+         else YouTubeText(title=caption.splitlines()[0], description=caption, tags=[]))
+    title = re.sub(r"[<>]", "", t.title).strip()[:100] or "New short"  # YouTube rejects < and >
     r = requests.post("https://www.googleapis.com/upload/youtube/v3/videos", timeout=60,
                       params={"uploadType": "resumable", "part": "snippet,status"},
                       headers={**auth, "X-Upload-Content-Type": "video/mp4"},
-                      json={"snippet": {"title": title, "description": caption, "categoryId": "24"},
+                      json={"snippet": {"title": title, "description": re.sub(r"[<>]", "", t.description)[:5000],
+                                        "tags": t.tags, "categoryId": "24"},
                             "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False,
                                        "containsSyntheticMedia": True}})
     fb(r)
@@ -1793,6 +1819,10 @@ def main():
         video = build(trivia_slides(p), caption, out)
 
     print("built", video)
+    if not demo:  # dry runs too, so the title can be checked before anything posts
+        yt = youtube_text(caption)
+        (video.parent / "youtube.json").write_text(yt.model_dump_json(indent=1), encoding="utf-8")
+        print("youtube title:", yt.title)
     if demo or dry:
         return
     ids = publish(video, caption)
